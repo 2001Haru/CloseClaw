@@ -214,7 +214,7 @@ class AgentCore:
                 user_id=self.current_session.user_id,
             )
             
-            if auth_result["status"] == "blocked":
+            if auth_result["status"] == "block":
                 return ToolResult(
                     tool_call_id=tool_call.tool_id,
                     status="blocked",
