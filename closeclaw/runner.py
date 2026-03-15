@@ -21,6 +21,7 @@ from typing import Any, Optional
 from .config import ConfigLoader, CloseCrawlConfig, ChannelConfig
 from .agents import AgentCore
 from .agents.task_manager import TaskManager
+from .agents.llm_providers import create_llm_provider, OpenAICompatibleProvider
 from .channels import CLIChannel, get_telegram_channel, get_feishu_channel
 from .channels.base import BaseChannel
 from .middleware import MiddlewareChain, SafetyGuard, PathSandbox, ZoneBasedPermission
@@ -89,7 +90,7 @@ def create_agent(config: CloseCrawlConfig,
     
     Args:
         config: Full CloseClaw config
-        llm_provider: LLM provider instance (if None, uses a placeholder)
+        llm_provider: LLM provider instance (if None, auto-creates from config)
     
     Returns:
         Fully configured AgentCore
@@ -103,9 +104,23 @@ def create_agent(config: CloseCrawlConfig,
         system_prompt=config.system_prompt,
     )
     
-    # Use placeholder LLM if none provided
+    # Auto-create LLM provider from config if not provided
     if llm_provider is None:
-        llm_provider = _PlaceholderLLM()
+        if config.llm.api_key:
+            llm_provider = create_llm_provider(
+                provider=config.llm.provider,
+                model=config.llm.model,
+                api_key=config.llm.api_key,
+                base_url=config.llm.base_url or "",
+                temperature=config.llm.temperature,
+                max_tokens=config.llm.max_tokens,
+                timeout_seconds=config.llm.timeout_seconds,
+            )
+            logger.info(f"LLM provider created: {config.llm.provider}/{config.llm.model} "
+                       f"(base_url={config.llm.base_url or 'default'})")
+        else:
+            logger.warning("No LLM api_key configured. Using placeholder LLM (echo mode).")
+            llm_provider = _PlaceholderLLM()
     
     # Create agent
     agent = AgentCore(

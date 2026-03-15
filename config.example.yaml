@@ -10,7 +10,8 @@ workspace_root: "/home/user/my_workspace"  # Change this to your workspace
 
 # LLM Configuration
 llm:
-  # Provider: openai, anthropic, gemini, ollama, openai-compatible
+  # Provider: openai, ohmygpt, deepseek, ollama, openai-compatible
+  # All providers use OpenAI-compatible API format
   provider: "openai"
   
   # Model name/identifier
@@ -19,8 +20,14 @@ llm:
   # API key (use environment variable ${OPENAI_API_KEY})
   api_key: ${OPENAI_API_KEY}
   
-  # Base URL (for openai-compatible providers)
-  # base_url: "http://localhost:8000/v1"
+  # Base URL for API endpoint
+  # - OpenAI default: https://api.openai.com/v1
+  # - OhMyGPT: https://api.ohmygpt.com/v1
+  # - DeepSeek: https://api.deepseek.com/v1
+  # - Ollama: http://localhost:11434/v1
+  # - Custom: any OpenAI-compatible endpoint
+  # If omitted, auto-detected from provider name
+  # base_url: "https://api.ohmygpt.com/v1"
   
   # Temperature (0.0 = deterministic, 1.0 = creative)
   temperature: 0.0
