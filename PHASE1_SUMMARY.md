@@ -193,6 +193,146 @@ CloseClaw架构
 
 ---
 
+## Phase 2 架构决策
+
+### 核心设计：同步主循环 + TaskManager异步管理
+
+在Phase 2实现中采用**混合异步模型**，而非纯事件驱动架构：
+
+#### 🎯 设计初心
+| 考量 | OpenXJavis（事件流） | CloseClaw（同步主循环） |
+|------|-----------|-----------|
+| 调试难度 | 🔴 高（事件链复杂） | 🟢 低（同步流程） |
+| 并发能力 | 🟢 很强 | 🟢 强（TaskManager补偿） |
+| 代码复杂度 | 🔴 高 | 🟢 低 |
+| 易维护性 | 🔴 难 | 🟢 易 |
+
+#### 📋 三个用户决策
+
+**决策1：HITL时序 = 立即确认**
+- Zone C操作不等结果就请求用户确认
+- 理由：Zone C命令都很危险，输出结果可能已经来不及反悔
+- 实现：操作下发前即挂起到WAITING_FOR_AUTH状态
+
+**决策2：任务超时 = 保留任务**
+- 不自动杀死超时任务
+- 理由：假设用户会自己关心这个任务（如大数据处理）
+- 实现：TaskManager记录任务，支持用户手动cancel
+
+**决策3：任务持久化 = 完整持久化**
+- 将活跃任务列表持久化到state.json
+- 理由：稳健性（Agent重启后恢复任务表）
+- 实现：启动时load_from_state()，关闭时save_to_state()
+
+#### 🔄 执行流程
+
+```
+用户 ✍️ "帮我爬这个网站"
+  ↓
+Agent同步循环 📋 接收消息
+  ↓
+分析耗时 ⏱️ 检测到是web_search（耗时工具）
+  ↓
+TaskManager创建任务 📌
+  - 生成task_id: "#001"
+  - 调用asyncio.create_task()
+  - 立即返回
+  ↓
+Agent继续循环 🔁 立即恢复
+  ↓
+响应用户 💬
+  "我已经帮你开启了后台爬虫任务#001，需要很久"
+  "你现在想聊点别的吗？"
+  ↓
+用户 ✍️ "帮我查天气" （同时后台任务在运行）
+  ↓
+Agent主循环 📋 处理新消息
+  ↓
+轮询检查 🔍 每次循环调用poll_results()
+  - 发现#001完成了 ✅
+  - 回调通知用户 📬 "爬虫完成了，结果是..."
+```
+
+#### 📦 关键组件：TaskManager
+
+```python
+class TaskManager:
+    # 核心方法
+    async def create_task(tool_name, params) -> str:
+        """返回task_id，立即返回"""
+        task_id = f"#{self.task_counter:03d}"
+        task = asyncio.create_task(...)
+        self.tasks[task_id] = task
+        return task_id
+    
+    async def poll_results(self) -> dict[str, Any]:
+        """主循环定期轮询，检查任务完成"""
+        for task_id, task in list(self.tasks.items()):
+            if task.done():
+                result = task.result()
+                self.results[task_id] = result
+                del self.tasks[task_id]
+        return self.results
+    
+    def load_from_state(self) -> None:
+        """Agent启动时从state.json恢复"""
+        ...
+    
+    def save_to_state(self) -> None:
+        """Agent关闭时保存state.json"""
+        ...
+```
+
+#### 🔐 HITL确认流程（立即确认）
+
+```
+Zone C操作触发 🚨
+  ↓
+立即生成确认请求 📋
+  - 操作类型: "file_write"
+  - 文件路径: "/workspace/config.yaml"
+  - Diff预览: 结构化展示改动
+  ↓
+发送到用户 📬 (Telegram/Feishu/CLI)
+  "⚠️ Zone C操作需要确认
+   文件: config.yaml | 操作: 修改
+   - old_value = 'xxx'
+   + new_value = 'yyy'
+   是否确认? [是] [否]"
+  ↓
+用户点击Yes → 立即执行 ✅
+用户点击No  → 操作中止 ❌
+  ↓
+操作结果写入audit.log 📝
+```
+
+#### 💾 状态持久化设计
+
+**state.json 结构**
+```json
+{
+  "agent_state": "running",
+  "active_tasks": {
+    "#001": {
+      "tool": "web_search",
+      "params": {"query": "..."},
+      "created_at": "2026-03-15T10:00:00Z",
+      "expires_after": 3600
+    }
+  },
+  "message_history": [...],
+  "completed_results": {...}
+}
+```
+
+**恢复机制**
+- Agent启动 → 调用`task_manager.load_from_state()`
+- 恢复所有active_tasks到后台
+- 继续轮询已有任务
+- 用户可以看到进度（`closeclaw tasks` 命令）
+
+---
+
 ## Phase 2 准备
 
 ### 可用资产
@@ -246,17 +386,125 @@ agent = AgentCore(config, tools, middleware)
 
 ---
 
+## ✅ 最终对齐：Phase 1 无需改动
+
+新的"同步主循环 + TaskManager"设计**不需要修改Phase 1的任何类型定义**，原因如下：
+
+### 1. 类型系统充分通用 ✅
+| 现有类型 | Phase 2 使用场景 | 需要改动？ |
+|---------|-----------|----------|
+| `Message.metadata` | 存储task_id、task_status | ❌ 不需要（就地扩展） |
+| `AgentState` (IDLE/RUNNING/WAITING_FOR_AUTH) | 发起任务、等待确认 | ❌ 不需要（已够用） |
+| `ToolResult.metadata` | 返回task_id给Agent | ❌ 不需要（就地扩展） |
+| `Tool.metadata` | 标记工具是否耗时 | ❌ 不需要（就地扩展） |
+
+### 2. TaskManager在Phase 2新增 ✅
+- 架构位置：`closeclaw/agents/task_manager.py`（新文件）
+- 不修改现有代码
+- 在主循环中调用其接口
+
+### 3. Phase 1保持不变的原因 ✅
+- 设计足够抽象（dataclass + metadata字段）
+- 类型系统是通用的基础设施
+- 新增功能通过扩展而非修改实现
+- 符合"开闭原则"（Open/Closed Principle）
+
+### 4. 兼容性验证
+```python
+# Phase 1的Message类型...
+msg = Message(
+    id="msg1",
+    channel_type="cli",
+    sender_id="user123",
+    sender_name="testuser",
+    content="爬这个网站",
+    metadata={}  # 空metadata
+)
+
+# Phase 2中自然扩展...
+msg.metadata["task_id"] = "#001"      # ✅ 无需改类型定义
+msg.metadata["task_status"] = "running"
+```
+
+### 5. 最终确认清单
+
+**不需要改动：**
+- ✅ `closeclaw/types/enums.py` (Zone, AgentState, etc.)
+- ✅ `closeclaw/types/messages.py` (Message, ToolCall, ToolResult等)
+- ✅ `closeclaw/types/models.py` (Tool, Agent, Session等)
+- ✅ `closeclaw/middleware/` (SafetyGuard, PathSandbox等)
+- ✅ `closeclaw/config/` (ConfigLoader)
+- ✅ `closeclaw/safety/` (AuditLogger)
+- ✅ `closeclaw/tools/` (核心工具实现)
+
+**需要新增或改进：**
+- 🆕 `closeclaw/agents/task_manager.py` (新文件)
+- 📝 `closeclaw/agents/core.py` (改进：集成TaskManager和主循环)
+- 🔧 `closeclaw/channels/` (确保支持task_id消息推送)
+
+---
+
+## 🎯 结论
+
+**Phase 1达成目标 ✅**
+- 类型系统抽象足够，支持TaskManager的引入
+- 安全架构完毕，不需要改动
+- 配置、工具、审计系统就绪
+- 代码质量良好（74个通过测试）
+
+**准备进入Phase 2 🚀**
+- 架构决策已确认（同步主循环 + TaskManager）
+- 三个关键决策已定（立即确认、保留超时任务、完整持久化）
+- Planning.md已更新对齐
+- 预计18小时完成核心实现
+框架就绪。Phase2主要任务是实现run()循环。
+
+---
+
 ## 推荐Phase 2工作顺序
 
-1. **Agent主循环集成** (4小时)
-   - 集成三层middleware
-   - 实现tool execution
-   - 实现auth处理
+#### 1️⃣ TaskManager实现 (4小时) ⚡ 优先级最高
+   - 文件位置：`closeclaw/agents/task_manager.py`
+   - 核心方法：`create_task()`、`poll_results()`、`load_from_state()`、`save_to_state()`
+   - 集成：工具层检测耗时操作时自动调用TaskManager
+   - 验证：编写单元测试验证任务创建、轮询、完成流程
 
-2. **LLM接口实现** (6小时)
-   - Tool调用生成
-   - 结果处理
-   - 错误恢复
+#### 2️⃣ Agent主循环集成 (4小时)
+   - 在AgentCore.run()中集成TaskManager
+   - 每循环调用`poll_results()`检查完成任务
+   - 实现消息通知：任务完成时主动推送结果给用户
+   - HITL确认流程集成在工具执行前
+
+#### 3️⃣ 工具适配 (3小时)
+   - 标记哪些工具是耗时操作（如web_search、file_process）
+   - 工具执行前决策：是否转发给TaskManager
+   - Zone A/B：直接执行，异步返回
+   - Zone C：先请求确认，再转发TaskManager
+
+#### 4️⃣ 状态持久化 (2小时)
+   - 实现state.json保存/加载
+   - Agent关闭时：`save_to_state()`
+   - Agent启动时：`load_from_state()` → 恢复任务
+   - 验证：模拟Agent崩溃后恢复
+
+#### 5️⃣ CLI扩展 (2小时)
+   - 新增`closeclaw tasks` 命令 → 列表所有活跃任务及进度
+   - 新增`closeclaw task <id>` 命令 → 查询单个任务详情
+   -  新增`closeclaw cancel <id>` 命令 → 中止任务
+
+#### 6️⃣ 测试与验证 (3小时)
+   - 端到端测试：用户消息 → 后台任务 → 结果推送
+   - HITL测试：Zone C操作确认流程
+   - 持久化测试：Agent重启后任务恢复
+   - 并发测试：多个后台任务同时运行
+
+**预计总工时：18小时（2.25天）**
+
+---
+
+## 最终对齐检查清单
+
+### ✅ Phase 1 依然完整无需改动
 
 3. **用户界面** (8小时)
    - REST API

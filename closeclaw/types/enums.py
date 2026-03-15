@@ -46,3 +46,12 @@ class ToolType(str, Enum):
     FILE = "file"
     WEBSEARCH = "websearch"
     SHELL = "shell"
+
+
+class TaskStatus(str, Enum):
+    """Background task execution status."""
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"

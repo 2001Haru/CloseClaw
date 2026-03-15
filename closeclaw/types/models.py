@@ -3,7 +3,37 @@
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol
 from datetime import datetime
-from .enums import Zone, AgentState, ToolType
+from .enums import Zone, AgentState, ToolType, TaskStatus
+
+
+@dataclass
+class BackgroundTask:
+    """Background task for long-running tool executions."""
+    task_id: str  # e.g., "#001"
+    tool_name: str
+    tool_arguments: dict[str, Any]
+    status: TaskStatus = TaskStatus.PENDING
+    created_at: datetime = field(default_factory=datetime.utcnow)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    result: Any = None
+    error: Optional[str] = None
+    expires_after: int = 3600  # Task expiration time in seconds
+    metadata: dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> dict:
+        return {
+            "task_id": self.task_id,
+            "tool_name": self.tool_name,
+            "status": self.status.value,
+            "created_at": self.created_at.isoformat(),
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "result": self.result,
+            "error": self.error,
+            "expires_after": self.expires_after,
+            "metadata": self.metadata,
+        }
 
 
 class ToolProtocol(Protocol):

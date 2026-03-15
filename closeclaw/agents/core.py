@@ -359,3 +359,100 @@ class AgentCore:
             logger.info(f"Ended session {self.current_session.session_id}")
             self.current_session = None
         self.state = AgentState.IDLE
+    
+    # --- TaskManager Integration Interface (Phase 2) ---
+    # These methods are placeholders for TaskManager integration in Phase 2
+    
+    def set_task_manager(self, task_manager: Any) -> None:
+        """Set the background task manager.
+        
+        Args:
+            task_manager: TaskManager instance for handling long-running operations
+        
+        Usage in Phase 2:
+            agent.set_task_manager(task_manager)
+        """
+        self.task_manager = task_manager
+        logger.info("TaskManager integrated with AgentCore")
+    
+    async def poll_background_tasks(self) -> list[dict[str, Any]]:
+        """Poll for completed background tasks from TaskManager.
+        
+        Called from main loop to check if any background tasks have completed.
+        
+        Returns:
+            List of completed task results, each containing:
+            {
+                "task_id": str,
+                "status": "completed" | "failed" | "cancelled",
+                "result": Any,
+                "error": Optional[str]
+            }
+        
+        Usage in Phase 2:
+            completed = await agent.poll_background_tasks()
+            for task in completed:
+                notify_user(task["task_id"], task["result"])
+        """
+        if not hasattr(self, 'task_manager') or not self.task_manager:
+            return []
+        
+        # Delegate to TaskManager (to be implemented in Phase 2)
+        completed_tasks = await self.task_manager.poll_results()
+        return completed_tasks
+    
+    async def create_background_task(self, 
+                                    tool_name: str, 
+                                    arguments: dict[str, Any]) -> str:
+        """Create a background task for long-running tool execution.
+        
+        Args:
+            tool_name: Name of the tool to execute
+            arguments: Tool arguments
+        
+        Returns:
+            task_id: Unique task identifier (e.g., "#001")
+        
+        Usage in Phase 2:
+            task_id = await agent.create_background_task("web_search", {...})
+            response = f"Task {task_id} started in background"
+        """
+        if not hasattr(self, 'task_manager') or not self.task_manager:
+            raise RuntimeError("TaskManager not configured")
+        
+        # Delegate to TaskManager (to be implemented in Phase 2)
+        task_id = await self.task_manager.create_task(tool_name, arguments)
+        logger.info(f"Created background task: {task_id}")
+        return task_id
+    
+    # --- Main Agent Loop (Phase 2) ---
+    # TODO: Implement as outlined in Planning.md
+    # Current skeleton for phase 2 integration:
+    # 
+    # async def run(self, session_id, user_id, channel_type, message_input_fn, message_output_fn):
+    #     """Main synchronous agent loop with async background task support.
+    #
+    #     Args:
+    #         session_id: Conversation session ID
+    #         user_id: User identifier
+    #         channel_type: Communication channel (telegram/feishu/cli)
+    #         message_input_fn: Async callable to receive user messages
+    #         message_output_fn: Async callable to send responses to user
+    #     
+    #     Flow:
+    #         1. Start session
+    #         2. Loop:
+    #             a. Get user message
+    #             b. Call process_message()
+    #             c. Poll background tasks via poll_background_tasks()
+    #             d. Send response + any completed task results
+    #             e. Handle WAITING_FOR_AUTH state
+    #         3. End session
+    #     
+    #     Features:
+    #         - Synchronous main loop (easy to debug)
+    #         - Background tasks via TaskManager (asyncio.create_task)
+    #         - HITL confirmation for Zone C operations
+    #         - State persistence (state.json)
+    #     """
+    #     pass
