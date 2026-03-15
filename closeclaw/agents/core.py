@@ -175,6 +175,53 @@ class AgentCore:
                 "pending_auth": pending_auth,
             }
         
+        # PERSISTENCE: Save assistant's tool calls and results to history
+        # so the LLM has memory of its actions on the next turn.
+        # Only do this if tools were actually called and finished (no auth block).
+        if tool_calls and tool_results:
+            self.message_history.append(Message(
+                id=f"msg_{datetime.utcnow().timestamp()}",
+                channel_type=self.current_session.channel_type if self.current_session else "unknown",
+                sender_id=self.agent_id,
+                sender_name="Agent",
+                content=llm_response or "Executed tools.",
+                tool_calls=tool_calls,
+                tool_results=tool_results,
+            ))
+            
+            # Since tools were executed, we should ideally ask the LLM to generate
+            # a final text response describing the results. We can do a second LLM pass:
+            messages_for_llm_post = self._format_conversation_for_llm()
+            try:
+                logger.info("Calling LLM for post-tool text response...")
+                final_response, _ = await self.llm_provider.generate(
+                    messages=messages_for_llm_post,
+                    tools=[],  # No tools on second pass to force text response
+                    temperature=self.config.temperature,
+                )
+                if final_response:
+                    llm_response = final_response
+                    
+                    # Also append this final text response to history
+                    self.message_history.append(Message(
+                        id=f"msg_{datetime.utcnow().timestamp()}_final",
+                        channel_type=self.current_session.channel_type if self.current_session else "unknown",
+                        sender_id=self.agent_id,
+                        sender_name="Agent",
+                        content=final_response,
+                    ))
+            except Exception as e:
+                logger.error(f"Post-tool LLM call failed: {e}")
+        elif llm_response:
+            # Just normal text response, append it
+            self.message_history.append(Message(
+                id=f"msg_{datetime.utcnow().timestamp()}",
+                channel_type=self.current_session.channel_type if self.current_session else "unknown",
+                sender_id=self.agent_id,
+                sender_name="Agent",
+                content=llm_response,
+            ))
+            
         return {
             "response": llm_response or "OK",
             "tool_calls": [tc.to_dict() for tc in tool_calls] if tool_calls else [],
@@ -347,8 +394,9 @@ class AgentCore:
                 "error": str(e),
             }
     
-    def _format_conversation_for_llm(self) -> list[dict[str, str]]:
+    def _format_conversation_for_llm(self) -> list[dict[str, Any]]:
         """Format conversation history for LLM input."""
+        import json
         messages = []
         
         # Add system prompt
@@ -361,10 +409,44 @@ class AgentCore:
         # Add message history
         for msg in self.message_history:
             role = "user" if msg.sender_id != self.agent_id else "assistant"
-            messages.append({
+            
+            msg_dict: dict[str, Any] = {
                 "role": role,
                 "content": msg.content,
-            })
+            }
+            
+            if role == "assistant" and msg.tool_calls:
+                # Format tool calls for OpenAI API
+                msg_dict["tool_calls"] = [
+                    {
+                        "id": tc.tool_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments)
+                        }
+                    } for tc in msg.tool_calls
+                ]
+            
+            messages.append(msg_dict)
+            
+            # If there are tool results, they must be appended as "tool" role messages
+            if msg.tool_results:
+                for tr in msg.tool_results:
+                    # Content must be a string. Default to JSON dump.
+                    content = ""
+                    if tr.status == "success":
+                        content = json.dumps(tr.result) if not isinstance(tr.result, str) else tr.result
+                    elif tr.status == "auth_required":
+                        content = "Operation requires user authorization. Waiting for approval."
+                    else:
+                        content = f"Error or Blocked ({tr.status}): {tr.error}"
+                        
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tr.tool_call_id,
+                        "content": content,
+                    })
         
         return messages
     

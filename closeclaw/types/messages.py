@@ -52,8 +52,12 @@ class Message:
     timestamp: datetime = field(default_factory=datetime.utcnow)
     metadata: dict[str, Any] = field(default_factory=dict)
     
-    def to_dict(self) -> dict:
-        return {
+    # Optional fields for LLM function calling history
+    tool_calls: Optional[list[ToolCall]] = None
+    tool_results: Optional[list[ToolResult]] = None
+    
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
             "id": self.id,
             "channel_type": self.channel_type,
             "sender_id": self.sender_id,
@@ -62,6 +66,11 @@ class Message:
             "timestamp": self.timestamp.isoformat(),
             "metadata": self.metadata,
         }
+        if self.tool_calls is not None:
+            data["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
+        if self.tool_results is not None:
+            data["tool_results"] = [tr.to_dict() for tr in self.tool_results]
+        return data
 
 
 @dataclass
