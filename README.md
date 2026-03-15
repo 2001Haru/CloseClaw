@@ -1,215 +1,213 @@
-# CloseClaw - Lightweight & Safe AI Agent Framework
+# CloseClaw — Lightweight & Safe AI Agent Framework
 
 **CloseClaw** is a lightweight, modular, and security-focused Python implementation of the OpenClaw Agent framework. It prioritizes code transparency, user control, and operational safety.
 
 ## Features
 
-### 🔒 **Three-Layer Security Model**
-
-1. **HITL (Human-in-the-Loop)**: Zone C operations require explicit user approval via Telegram/Feishu/CLI
-2. **Path Sandboxing**: All file operations restricted to configured workspace
+### 🔒 Three-Layer Security
+1. **HITL (Human-in-the-Loop)**: Zone C operations require explicit user approval
+2. **Path Sandboxing**: File operations restricted to configured workspace
 3. **Command Blacklist**: Dangerous shell commands blocked before execution
 
-### ⚡ **Lightweight Architecture**
-
-- Synchronous agent loop (< 500 lines core code)
-- Minimal dependencies (pydantic, httpx, pyyaml)
+### ⚡ Lightweight Architecture
+- Synchronous agent loop (< 500 lines core)
+- Minimal dependencies: `httpx`, `pyyaml`, `pydantic` (optional: `python-telegram-bot`)
+- No openai SDK required — uses raw `httpx` for LLM API calls
 - Low memory footprint (< 50MB baseline)
-- No Docker hard dependency
 
-### 📱 **Multi-Channel Support**
+### 📱 Multi-Channel Support
+- **CLI**: Interactive terminal mode for local development
+- **Telegram**: Long polling + InlineKeyboard for HITL confirmation
+- **Feishu (Lark)**: httpx REST API + Interactive Card for HITL
 
-- **Telegram**: International standard messaging
-- **Feishu (Lark)**: Enterprise collaboration
-- **CLI**: Local development mode
+### 🤖 Third-Party LLM Support
+Any OpenAI-compatible API endpoint works out of the box:
+- OpenAI, OhMyGPT, DeepSeek, Ollama, Azure OpenAI, etc.
+- Just set `provider`, `api_key`, and `base_url` in config
 
-### 🛠️ **Simple Tool System**
-
-Registered tools with decorator patterns:
-```python
-@tool(name="read_file", zone=Zone.ZONE_A)
-async def read_file_impl(path: str) -> str:
-    ...
-```
-
-### 📊 **Transparency**
-
-- Machine-readable state (`state.json`)
-- Human-readable interaction log (`interaction.md`)
-- Complete audit trail (`audit.log`)
+---
 
 ## Quick Start
 
 ### 1. Install
 
 ```bash
-pip install closeclaw
-```
+# Clone the repo
+git clone https://github.com/closeclaw/closeclaw.git
+cd closeclaw
 
-Or install from source:
-```bash
+# Install in development mode
 pip install -e .
+
+# (Optional) Install Telegram support
+pip install -e ".[telegram]"
 ```
 
 ### 2. Configure
 
-Copy the example config:
 ```bash
+# Copy the template
 cp config.example.yaml config.yaml
 ```
 
-Edit `config.yaml`:
-- Set your OpenAI API key: `export OPENAI_API_KEY=sk-...`
-- Set Telegram bot token: `export TELEGRAM_BOT_TOKEN=...`
-- Set your Telegram user ID as admin
-- Set workspace directory
+Edit `config.yaml` with your settings:
+
+```yaml
+agent_id: "closeclaw-main"
+workspace_root: "D:/your/workspace/path"  # Absolute path
+
+llm:
+  provider: "openai-compatible"    # or "openai", "ohmygpt", "deepseek", "ollama"
+  model: "gpt-4"                  # Model name
+  api_key: "sk-your-api-key"      # Direct string or ${ENV_VAR}
+  base_url: "https://api.ohmygpt.com/v1"  # Third-party endpoint
+
+channels:
+  - type: "cli"
+    enabled: true      # Start with CLI for testing
+  - type: "telegram"
+    enabled: false      # Enable later with real bot token
+
+safety:
+  admin_user_ids: ["cli_user"]     # For CLI; use Telegram user ID for Telegram
+  require_auth_for_zones: ["C"]    # Zone C requires HITL approval
+```
+
+> ⚠️ **API Key Format**: Use a direct string like `"sk-xxx"`, NOT the `${...}` env var syntax, unless you've actually set the environment variable.
 
 ### 3. Run
 
-```python
-from closeclaw import ConfigLoader, AgentCore
-
-# Load configuration
-config = ConfigLoader.load("config.yaml")
-
-# Initialize agent (Phase 1 still WIP - full implementation in Phase 2-3)
-# agent = AgentCore(
-#     agent_id=config.agent_id,
-#     llm_provider=...,  # Implement LLM bridge
-#     config=config,
-#     workspace_root=config.workspace_root,
-# )
+```bash
+# Start the agent with CLI channel
+python -m closeclaw --config config.yaml
 ```
+
+You should see:
+```
+════════════════════════════════════════════════════════════
+  CloseClaw — Interactive CLI Mode
+  Type your message and press Enter.
+  Commands: /exit, /quit
+════════════════════════════════════════════════════════════
+
+You > Hello, what can you do?
+Agent > I can help you with file operations, web fetching, and shell commands...
+```
+
+### 4. Try Some Operations
+
+```
+You > Read the file config.yaml                    # Zone A → auto-execute ✅
+You > Write "hello" to test.txt                    # Zone C → HITL prompt ⚠️
+  ⚠️ Zone C Operation — Authorization Required
+  Tool: write_file
+  Approve? [Y/n]: y
+  ✅ Approved
+Agent > File written: test.txt
+```
+
+---
 
 ## Architecture
 
 ```
 closeclaw/
-├── agents/          # Agent core loop
-│   └── core.py
-├── channels/        # Communication (Phase 3)
-├── tools/           # Tool implementations
-│   ├── file_tools.py
-│   ├── shell_tools.py
-│   └── web_tools.py
-├── middleware/      # Security filters
-│   ├── __init__.py  (SafetyGuard, PathSandbox, ZoneBasedPermission)
-├── types/           # Type definitions
-├── safety/          # Audit logging
-└── config.py        # Configuration system
+├── agents/
+│   ├── core.py            # Agent loop engine (synchronous + TaskManager)
+│   ├── task_manager.py    # Background task management
+│   └── llm_providers.py   # OpenAI-compatible LLM client (httpx)
+├── channels/
+│   ├── base.py            # BaseChannel abstract interface
+│   ├── cli_channel.py     # Interactive CLI channel
+│   ├── telegram.py        # Telegram Bot channel
+│   └── feishu.py          # Feishu REST API channel
+├── tools/
+│   ├── base.py            # Tool registry & decorators
+│   ├── file_tools.py      # read/write/delete/list files
+│   ├── shell_tools.py     # Async shell execution
+│   └── web_tools.py       # Web search & URL fetching
+├── middleware/             # Security middleware chain
+│   └── __init__.py        # SafetyGuard, PathSandbox, ZoneBasedPermission
+├── types/                  # Type definitions & enums
+├── safety/                 # Audit logging
+├── config.py               # YAML config loader
+└── runner.py               # Multi-channel launcher
 ```
 
 ## Security Model
 
 ### Trust Zones
 
-- **Zone A**: Safe operations (read-only), auto-execute
-- **Zone B**: Internal operations (logging), silent+log
-- **Zone C**: Dangerous operations (writes, deletes, shell), require HITL
+| Zone | Behavior | Examples |
+|------|----------|----------|
+| **A** | Auto-execute | Read file, list files, web search |
+| **B** | Silent + log | Internal metadata, audit logs |
+| **C** | HITL required | Write/delete files, shell commands |
 
-### Safeguards
+### Three-Layer Safeguards
 
-| Layer | Mechanism | Examples |
-|-------|-----------|----------|
-| 1st   | HITL      | User confirmation via Telegram button |
-| 2nd   | Path Sandbox | Prevent `../../etc/passwd` attacks |
-| 3rd   | Command Blacklist | Block `del /s`, `format`, etc. |
+| Layer | Mechanism | Description |
+|-------|-----------|-------------|
+| 1st | SafetyGuard | Regex blacklist for dangerous commands |
+| 2nd | PathSandbox | All file ops restricted to `workspace_root` |
+| 3rd | ZoneBasedPermission | Zone C → HITL confirmation via channel UI |
+
+---
+
+## LLM Provider Configuration
+
+CloseClaw uses **raw httpx** to call OpenAI-compatible APIs. No `openai` SDK dependency.
+
+| Provider | `provider` value | Default `base_url` |
+|----------|-----------------|-------------------|
+| OpenAI | `"openai"` | `https://api.openai.com/v1` |
+| OhMyGPT | `"ohmygpt"` | `https://api.ohmygpt.com/v1` |
+| DeepSeek | `"deepseek"` | `https://api.deepseek.com/v1` |
+| Ollama | `"ollama"` | `http://localhost:11434/v1` |
+| Custom | `"openai-compatible"` | Must set `base_url` explicitly |
+
+You can always override with an explicit `base_url` regardless of provider name.
+
+---
 
 ## Development Status
 
-- ✅ **Phase 1: Base Infrastructure** (Current)
-  - Core types and enums
-  - Agent loop engine (synchronous)
-  - Middleware system
-  - Configuration system
-  - Tool system
-  - Safety audit logging
-
-- 🚀 **Phase 2: Agent Core Rewrite** (Coming)
-  - Decorator-based tool registration
-  - Middleware chain execution
-  - HITL confirmation flow with Diff Preview
-  - State persistence
-
-- 📱 **Phase 3: Channels & Tools** (Coming)
-  - Telegram integration
-  - Feishu integration
-  - CLI embedding
-  - Enhanced tool implementations
-
-- 🧪 **Phase 4: Testing & Optimization** (Later)
-  - End-to-end tests
-  - Performance tuning
-  - Audit logging refinement
-
-- 📚 **Phase 5: Documentation & Release** (Later)
-  - User guide
-  - API documentation
-  - Example configurations
-
-## Configuration Example
-
-```yaml
-agent_id: "closeclaw-main"
-workspace_root: "/home/user/workspace"
-
-llm:
-  provider: "openai"
-  model: "gpt-4"
-  api_key: ${OPENAI_API_KEY}
-  temperature: 0.0
-
-channels:
-  - type: "telegram"
-    enabled: true
-    token: ${TELEGRAM_BOT_TOKEN}
-  - type: "cli"
-    enabled: true
-
-safety:
-  admin_user_ids: ["YOUR_TELEGRAM_ID"]
-  require_auth_for_zones: ["C"]
-  command_blacklist_enabled: true
-```
-
-## File Operations Example
-
-```python
-# Read file (Zone A - auto-execute)
-content = await agent.tools["read_file"].handler(path="config.yaml")
-
-# Write file (Zone C - requires HITL approval)
-result = await agent.tools["write_file"].handler(
-    path="output.txt",
-    content="New content"
-)
-# → Agent sends Diff Preview to user
-# → User clicks [Yes/No]
-# → If approved, file is written
-```
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1 | ✅ Complete | Core types, agent loop, middleware, config, tools, safety |
+| Phase 2 | ✅ Complete | TaskManager, async tool routing, state persistence, CLI commands |
+| Phase 3 | ✅ Complete | Channels (Telegram/Feishu/CLI), LLM providers, async shell, runner |
+| Phase 4 | 📋 Planned | Test suite cleanup, end-to-end tests, performance tuning |
+| Phase 5 | 📋 Planned | Documentation, API docs, example configurations |
 
 ## Troubleshooting
 
 ### "Module not found: closeclaw"
-- Install the package: `pip install -e .`
-- Or add the repo to PYTHONPATH: `export PYTHONPATH=$PYTHONPATH:/path/to/closeclaw`
+```bash
+pip install -e .
+```
 
-### "Cannot import middleware"
-- Ensure all `__init__.py` files are present in closeclaw/
+### LLM returns empty or errors
+- Check your `api_key` is correct (direct string, not `${...}` unless env var is set)
+- Check `base_url` matches your provider
+- Try setting `log_level: "DEBUG"` in config for detailed HTTP logs
+
+### Zone C operations always blocked
+- Add your user ID to `safety.admin_user_ids` in config
+- For CLI: the default user ID is `"cli_user"`
 
 ## Contributing
 
-Contributions welcome! Please:
-1. Follow PEP 8 style (use `black` and `ruff`)
+1. Follow PEP 8 (use `black` and `ruff`)
 2. Add tests for new features
 3. Update README with significant changes
 
 ## License
 
-MIT License - See LICENSE file
+MIT License — See LICENSE file
 
 ## References
 
-- OpenClaw Design: https://github.com/openclaw/openclaw-python
 - Planning Document: [Planning.md](Planning.md)
-- Security Model: [Planning.md - Security Section](Planning.md#安全与权限--三层防护)
+- Phase 1 Summary: [PHASE1_SUMMARY.md](PHASE1_SUMMARY.md)
+- Phase 2 Summary: [PHASE2_SUMMARY.md](PHASE2_SUMMARY.md)

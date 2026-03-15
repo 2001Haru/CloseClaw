@@ -17,7 +17,7 @@ llm:
   # Model name/identifier
   model: "gpt-4"
   
-  # API key (use environment variable ${OPENAI_API_KEY})
+  # API key — direct string or environment variable ${OPENAI_API_KEY}
   api_key: ${OPENAI_API_KEY}
   
   # Base URL for API endpoint
@@ -27,7 +27,7 @@ llm:
   # - Ollama: http://localhost:11434/v1
   # - Custom: any OpenAI-compatible endpoint
   # If omitted, auto-detected from provider name
-  # base_url: "https://api.ohmygpt.com/v1"
+  base_url: "https://api.ohmygpt.com/v1"
   
   # Temperature (0.0 = deterministic, 1.0 = creative)
   temperature: 0.0
