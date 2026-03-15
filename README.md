@@ -170,6 +170,21 @@ You can always override with an explicit `base_url` regardless of provider name.
 
 ---
 
+## Workspace Configuration (Path Sandbox)
+
+CloseClaw uses a strict **Path Sandbox**. The Agent is **only** allowed to read, write, or list files inside the directory specified by `workspace_root` in your `config.yaml`.
+
+```yaml
+# Example: Only allow the agent to access files in this specific folder
+workspace_root: "D:/MyProjects/CloseClawWorkspace"
+```
+
+If the Agent tries to access files outside this directory (e.g., `D:/HALcode` or `../../etc/passwd`), the `PathSandbox` middleware will automatically **block** the operation and return an error to the Agent.
+
+> 💡 **Tip**: Create an empty, dedicated folder for the Agent to work in (e.g., `mkdir ./agent_workspace`) and point `workspace_root` to its absolute path. Never set your entire disk (like `C:/` or `D:/`) as the workspace!
+
+---
+
 ## Development Status
 
 | Phase | Status | Description |
