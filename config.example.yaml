@@ -1,0 +1,90 @@
+# CloseClaw Configuration Template
+# Copy this file to config.yaml and fill in your settings
+
+# Agent identifier (unique name for this agent instance)
+agent_id: "closeclaw-main"
+
+# Workspace root directory (ALL file operations restricted to this directory)
+# Use absolute paths for safety
+workspace_root: "/home/user/my_workspace"  # Change this to your workspace
+
+# LLM Configuration
+llm:
+  # Provider: openai, anthropic, gemini, ollama, openai-compatible
+  provider: "openai"
+  
+  # Model name/identifier
+  model: "gpt-4"
+  
+  # API key (use environment variable ${OPENAI_API_KEY})
+  api_key: ${OPENAI_API_KEY}
+  
+  # Base URL (for openai-compatible providers)
+  # base_url: "http://localhost:8000/v1"
+  
+  # Temperature (0.0 = deterministic, 1.0 = creative)
+  temperature: 0.0
+  
+  # Max tokens per response
+  max_tokens: 2000
+  
+  # Timeout in seconds
+  timeout_seconds: 60
+
+# Communication channels (at least one must be enabled)
+channels:
+  # Telegram channel (optional)
+  - type: "telegram"
+    enabled: true
+    # Bot token from @BotFather
+    token: ${TELEGRAM_BOT_TOKEN}
+  
+  # Feishu (Lark) channel (optional)
+  - type: "feishu"
+    enabled: false
+    # App ID and secret from Feishu console
+    token: ${FEISHU_TOKEN}
+    webhook_url: ${FEISHU_WEBHOOK}
+  
+  # Local CLI (always available for development)
+  - type: "cli"
+    enabled: true
+
+# Security and permission controls
+safety:
+  # User IDs permitted to approve Zone C operations
+  # Get Telegram user ID: https://t.me/userinfobot
+  admin_user_ids:
+    - "YOUR_TELEGRAM_USER_ID"
+  
+  # Which zones require explicit authorization
+  # A = always safe, B = internal, C = dangerous
+  require_auth_for_zones:
+    - "C"
+  
+  # Enable command blacklist for shell execution
+  command_blacklist_enabled: true
+  
+  # Custom regex patterns to block (in addition to built-in list)
+  custom_blacklist_rules: []
+  
+  # Audit logging
+  audit_log_enabled: true
+  audit_log_path: "audit.log"
+
+# Agent loop configuration
+max_iterations: 10
+timeout_seconds: 300
+
+# System prompt (optional; leave blank to use default)
+system_prompt: |
+  You are CloseClaw, a safe and precise AI agent.
+  Always prioritize safety and security.
+  If unsure about an operation, ask for clarification.
+
+# Logging
+log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+# State persistence files
+state_file: "state.json"              # Machine-readable state
+interaction_log_file: "interaction.md"  # Human-readable log

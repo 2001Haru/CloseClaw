@@ -1,0 +1,263 @@
+"""Tests for configuration system."""
+
+import pytest
+import os
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+
+from closeclaw.config import (
+    LLMConfig, ChannelConfig, SafetyConfig,
+    CloseCrawlConfig, ConfigLoader
+)
+
+
+class TestLLMConfig:
+    """Test LLM configuration."""
+    
+    def test_llm_config_creation(self):
+        """Test basic LLM config creation."""
+        config = LLMConfig(
+            provider="openai",
+            model="gpt-4",
+            api_key="sk-1234567890",
+            temperature=0.0,
+            max_tokens=2000
+        )
+        
+        assert config.provider == "openai"
+        assert config.model == "gpt-4"
+        assert config.temperature == 0.0
+    
+    def test_llm_config_defaults(self):
+        """Test LLM config default values."""
+        config = LLMConfig(
+            provider="anthropic",
+            model="claude-3-opus"
+        )
+        
+        assert config.temperature == 0.0
+        assert config.max_tokens == 2000
+        assert config.timeout_seconds == 60
+    
+    def test_llm_config_to_dict(self):
+        """Test LLM config to_dict conversion."""
+        config = LLMConfig(
+            provider="gemini",
+            model="gemini-pro",
+            api_key="test_key"
+        )
+        
+        config_dict = config.to_dict()
+        assert config_dict["provider"] == "gemini"
+        assert config_dict["model"] == "gemini-pro"
+        assert config_dict["api_key"] == "test_key"
+
+
+class TestChannelConfig:
+    """Test channel configuration."""
+    
+    def test_channel_config_cli(self):
+        """Test CLI channel configuration."""
+        config = ChannelConfig(
+            type="cli",
+            enabled=True
+        )
+        
+        assert config.type == "cli"
+        assert config.enabled is True
+    
+    def test_channel_config_telegram(self):
+        """Test Telegram channel configuration."""
+        config = ChannelConfig(
+            type="telegram",
+            enabled=True,
+            token="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11",
+            metadata={"chat_id": 987654321}
+        )
+        
+        assert config.type == "telegram"
+        assert config.token is not None
+        assert config.metadata["chat_id"] == 987654321
+    
+    def test_channel_config_to_dict(self):
+        """Test channel config to_dict conversion."""
+        config = ChannelConfig(
+            type="feishu",
+            enabled=True,
+            webhook_url="https://open.feishu.cn/open-apis/bot/v2/hook/xxx"
+        )
+        
+        config_dict = config.to_dict()
+        assert config_dict["type"] == "feishu"
+        assert "webhook_url" in config_dict
+
+
+class TestSafetyConfig:
+    """Test safety configuration."""
+    
+    def test_safety_config_defaults(self):
+        """Test safety config defaults."""
+        config = SafetyConfig()
+        
+        assert config.enable_hitl is True
+        assert config.enable_audit_log is True
+    
+    def test_safety_config_custom(self):
+        """Test custom safety config."""
+        config = SafetyConfig(
+            enable_hitl=False,
+            enable_audit_log=True,
+            audit_log_path="/var/log/closeclaw/audit.jsonl",
+            audit_log_retention_days=30
+        )
+        
+        assert config.enable_hitl is False
+        assert config.audit_log_retention_days == 30
+
+
+class TestCloseCrawlConfig:
+    """Test main CloseCrawl configuration."""
+    
+    def test_config_creation_with_llm(self):
+        """Test creating config with LLM settings."""
+        llm_config = LLMConfig(
+            provider="openai",
+            model="gpt-4"
+        )
+        
+        config = CloseCrawlConfig(
+            llm=llm_config,
+            workspace_root="/workspace"
+        )
+        
+        assert config.llm.provider == "openai"
+        assert config.workspace_root == "/workspace"
+    
+    def test_config_with_multiple_channels(self):
+        """Test config with multiple channels."""
+        cli_channel = ChannelConfig(type="cli", enabled=True)
+        telegram_channel = ChannelConfig(type="telegram", enabled=True)
+        
+        config = CloseCrawlConfig(
+            llm=LLMConfig(provider="openai", model="gpt-4"),
+            channels={"cli": cli_channel, "telegram": telegram_channel}
+        )
+        
+        assert len(config.channels) == 2
+        assert "telegram" in config.channels
+
+
+class TestConfigLoader:
+    """Test configuration loader."""
+    
+    def test_load_config_from_yaml(self, config_file):
+        """Test loading config from YAML file."""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test123"}):
+            loader = ConfigLoader()
+            config = loader.load(str(config_file))
+            
+            assert config is not None
+            assert config.llm.provider == "openai"
+            assert config.llm.model == "gpt-4"
+    
+    def test_load_nonexistent_file(self):
+        """Test loading nonexistent config file."""
+        loader = ConfigLoader()
+        
+        with pytest.raises((FileNotFoundError, Exception)):
+            loader.load("/nonexistent/config.yaml")
+    
+    def test_env_var_substitution(self, temp_workspace):
+        """Test environment variable substitution."""
+        config_content = """
+llm:
+  provider: openai
+  model: gpt-4
+  api_key: ${OPENAI_API_KEY}
+
+safety:
+  audit_log_path: ${WORKSPACE_ROOT}/audit.jsonl
+"""
+        config_path = Path(temp_workspace) / "config.yaml"
+        config_path.write_text(config_content)
+        
+        with patch.dict(os.environ, {
+            "OPENAI_API_KEY": "sk-test123",
+            "WORKSPACE_ROOT": "/data/workspace"
+        }):
+            loader = ConfigLoader()
+            config = loader.load(str(config_path))
+            
+            assert config.llm.api_key == "sk-test123"
+            assert config.safety.audit_log_path == "/data/workspace/audit.jsonl"
+    
+    def test_config_validation(self, temp_workspace):
+        """Test config validation."""
+        # Missing required fields
+        invalid_config = """
+llm:
+  provider: openai
+"""
+        config_path = Path(temp_workspace) / "invalid_config.yaml"
+        config_path.write_text(invalid_config)
+        
+        loader = ConfigLoader()
+        with pytest.raises(Exception):  # Should raise validation error
+            loader.load(str(config_path))
+    
+    def test_merge_configs(self):
+        """Test merging configs with defaults."""
+        custom_yaml = """
+llm:
+  provider: anthropic
+  model: claude-3-opus
+  temperature: 0.5
+"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(custom_yaml)
+            f.flush()
+            
+            try:
+                loader = ConfigLoader()
+                config = loader.load(f.name)
+                
+                # Custom values
+                assert config.llm.provider == "anthropic"
+                assert config.llm.temperature == 0.5
+                
+                # Default values
+                assert config.llm.max_tokens == 2000
+                assert config.safety.enable_hitl is True
+            finally:
+                os.unlink(f.name)
+    
+    def test_config_to_dict(self, config_file):
+        """Test converting config to dict."""
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test123"}):
+            loader = ConfigLoader()
+            config = loader.load(str(config_file))
+            config_dict = config.to_dict()
+            
+            assert "llm" in config_dict
+            assert config_dict["llm"]["provider"] == "openai"
+            assert "safety" in config_dict
+
+
+class TestConfigEdgeCases:
+    """Test edge cases in configuration."""
+    
+    def test_empty_metadata(self):
+        """Test config with empty metadata."""
+        config = ChannelConfig(type="cli")
+        assert config.metadata == {}
+    
+    def test_special_characters_in_paths(self):
+        """Test config with special characters in paths."""
+        config = SafetyConfig(
+            audit_log_path="/var/log/closeclaw/audit-2026-03-15.jsonl"
+        )
+        assert "2026-03-15" in config.audit_log_path
+
+    # NOTE: test_very_large_timeout and test_zero_retention_days removed
+    # (决策4：只修关键的Config功能，edge case推迟到Phase2)

@@ -1,0 +1,307 @@
+"""Configuration system for CloseClaw."""
+
+import os
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Optional
+import yaml
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class LLMConfig:
+    """LLM provider configuration."""
+    provider: str  # "openai", "anthropic", "gemini", "ollama", etc.
+    model: str  # e.g., "gpt-4", "claude-3-opus"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    temperature: float = 0.0
+    max_tokens: int = 2000
+    timeout_seconds: int = 60
+    
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "api_key": self.api_key,
+            "base_url": self.base_url,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "timeout_seconds": self.timeout_seconds,
+        }
+
+
+@dataclass
+class ChannelConfig:
+    """Channel configuration."""
+    type: str  # "telegram", "feishu", "cli"
+    enabled: bool = True
+    token: Optional[str] = None
+    webhook_url: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "enabled": self.enabled,
+            "token": self.token,
+            "webhook_url": self.webhook_url,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass
+class SafetyConfig:
+    """Safety and permission configuration."""
+    admin_user_ids: list[str] = field(default_factory=list)
+    require_auth_for_zones: list[str] = field(default_factory=lambda: ["C"])
+    command_blacklist_enabled: bool = True
+    custom_blacklist_rules: list[str] = field(default_factory=list)
+    audit_log_enabled: bool = True
+    audit_log_path: str = "audit.log"
+    
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "admin_user_ids": self.admin_user_ids,
+            "require_auth_for_zones": self.require_auth_for_zones,
+            "command_blacklist_enabled": self.command_blacklist_enabled,
+            "custom_blacklist_rules": self.custom_blacklist_rules,
+            "audit_log_enabled": self.audit_log_enabled,
+            "audit_log_path": self.audit_log_path,
+        }
+
+
+@dataclass
+class CloseCrawlConfig:
+    """Main CloseClaw configuration."""
+    agent_id: str
+    workspace_root: str
+    llm: LLMConfig
+    channels: list[ChannelConfig] = field(default_factory=list)
+    safety: SafetyConfig = field(default_factory=SafetyConfig)
+    max_iterations: int = 10
+    timeout_seconds: int = 300
+    system_prompt: Optional[str] = None
+    log_level: str = "INFO"
+    state_file: str = "state.json"
+    interaction_log_file: str = "interaction.md"
+    
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "agent_id": self.agent_id,
+            "workspace_root": self.workspace_root,
+            "llm": self.llm.to_dict(),
+            "channels": [ch.to_dict() for ch in self.channels],
+            "safety": self.safety.to_dict(),
+            "max_iterations": self.max_iterations,
+            "timeout_seconds": self.timeout_seconds,
+            "system_prompt": self.system_prompt,
+            "log_level": self.log_level,
+            "state_file": self.state_file,
+            "interaction_log_file": self.interaction_log_file,
+        }
+
+
+class ConfigLoader:
+    """Load and validate configuration from YAML."""
+    
+    @staticmethod
+    def load(config_path: str) -> CloseCrawlConfig:
+        """Load configuration from YAML file.
+        
+        Args:
+            config_path: Path to config.yaml
+            
+        Returns:
+            CloseCrawlConfig instance
+        """
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+        
+        logger.info(f"Loading configuration from {config_path}")
+        
+        with open(config_path, "r", encoding="utf-8") as f:
+            raw_config = yaml.safe_load(f)
+        
+        # Replace environment variable placeholders
+        raw_config = ConfigLoader._replace_env_vars(raw_config)
+        
+        # Validate required fields
+        ConfigLoader._validate_config(raw_config)
+        
+        # Build config objects
+        config = ConfigLoader._build_config(raw_config)
+        
+        logger.info(f"Configuration loaded: agent_id={config.agent_id}")
+        return config
+    
+    @staticmethod
+    def _replace_env_vars(config: dict[str, Any]) -> dict[str, Any]:
+        """Replace ${ENV_VAR} placeholders with environment variables."""
+        config_str = yaml.dump(config)
+        
+        # Replace all ${VAR_NAME} with env var values
+        import re
+        def replace_env(match):
+            var_name = match.group(1)
+            default_value = match.group(2) or ""
+            return os.environ.get(var_name, default_value)
+        
+        config_str = re.sub(r'\$\{([^:}]+)(?::([^}]*))?\}', replace_env, config_str)
+        
+        return yaml.safe_load(config_str)
+    
+    @staticmethod
+    def _validate_config(raw_config: dict[str, Any]) -> None:
+        """Validate required configuration fields."""
+        required_fields = ["agent_id", "workspace_root", "llm"]
+        for field in required_fields:
+            if field not in raw_config:
+                raise ValueError(f"Missing required config field: {field}")
+        
+        # Validate workspace_root exists
+        workspace = raw_config.get("workspace_root")
+        if not os.path.exists(workspace):
+            raise ValueError(f"workspace_root does not exist: {workspace}")
+        
+        # Validate LLM config
+        llm = raw_config.get("llm", {})
+        if "provider" not in llm or "model" not in llm:
+            raise ValueError("LLM config must have 'provider' and 'model'")
+    
+    @staticmethod
+    def _build_config(raw_config: dict[str, Any]) -> CloseCrawlConfig:
+        """Build CloseCrawlConfig from raw YAML."""
+        
+        # LLM config
+        llm_raw = raw_config["llm"]
+        llm = LLMConfig(
+            provider=llm_raw["provider"],
+            model=llm_raw["model"],
+            api_key=llm_raw.get("api_key"),
+            base_url=llm_raw.get("base_url"),
+            temperature=llm_raw.get("temperature", 0.0),
+            max_tokens=llm_raw.get("max_tokens", 2000),
+            timeout_seconds=llm_raw.get("timeout_seconds", 60),
+        )
+        
+        # Channels
+        channels = []
+        for ch_raw in raw_config.get("channels", []):
+            channel = ChannelConfig(
+                type=ch_raw["type"],
+                enabled=ch_raw.get("enabled", True),
+                token=ch_raw.get("token"),
+                webhook_url=ch_raw.get("webhook_url"),
+                metadata=ch_raw.get("metadata", {}),
+            )
+            channels.append(channel)
+        
+        # Safety config
+        safety_raw = raw_config.get("safety", {})
+        safety = SafetyConfig(
+            admin_user_ids=safety_raw.get("admin_user_ids", []),
+            require_auth_for_zones=safety_raw.get("require_auth_for_zones", ["C"]),
+            command_blacklist_enabled=safety_raw.get("command_blacklist_enabled", True),
+            custom_blacklist_rules=safety_raw.get("custom_blacklist_rules", []),
+            audit_log_enabled=safety_raw.get("audit_log_enabled", True),
+            audit_log_path=safety_raw.get("audit_log_path", "audit.log"),
+        )
+        
+        # Main config
+        config = CloseCrawlConfig(
+            agent_id=raw_config["agent_id"],
+            workspace_root=raw_config["workspace_root"],
+            llm=llm,
+            channels=channels,
+            safety=safety,
+            max_iterations=raw_config.get("max_iterations", 10),
+            timeout_seconds=raw_config.get("timeout_seconds", 300),
+            system_prompt=raw_config.get("system_prompt"),
+            log_level=raw_config.get("log_level", "INFO"),
+            state_file=raw_config.get("state_file", "state.json"),
+            interaction_log_file=raw_config.get("interaction_log_file", "interaction.md"),
+        )
+        
+        return config
+    
+    @staticmethod
+    def create_example_config(output_path: str) -> None:
+        """Create an example config.yaml template."""
+        example_config = """# CloseClaw Configuration
+# Refer to this template to configure your CloseClaw agent
+
+# Agent identifier
+agent_id: "closeclaw-001"
+
+# Workspace root directory (all file operations restricted to this)
+workspace_root: "/path/to/workspace"
+
+# LLM Configuration
+# Supported providers: openai, anthropic, gemini, ollama, openai-compatible
+llm:
+  provider: "openai"  
+  model: "gpt-4"
+  api_key: ${OPENAI_API_KEY}  # Use environment variable
+  temperature: 0.0
+  max_tokens: 2000
+  timeout_seconds: 60
+
+# Channels configuration (optional)
+channels:
+  - type: "telegram"
+    enabled: true
+    token: ${TELEGRAM_TOKEN}
+    
+  - type: "feishu"
+    enabled: false
+    token: ${FEISHU_TOKEN}
+    webhook_url: ${FEISHU_WEBHOOK}
+    
+  - type: "cli"
+    enabled: true
+
+# Safety and permission controls
+safety:
+  # User IDs permitted to approve Zone C operations
+  admin_user_ids:
+    - "user_id_here"
+  
+  # Which zones require authorization [A, B, C]
+  require_auth_for_zones:
+    - "C"
+  
+  # Enable command blacklist for shell operations
+  command_blacklist_enabled: true
+  
+  # Custom regex patterns to block (e.g., additional dangerous commands)
+  custom_blacklist_rules: []
+  
+  # Audit logging
+  audit_log_enabled: true
+  audit_log_path: "audit.log"
+
+# Agent loop configuration
+max_iterations: 10
+timeout_seconds: 300
+
+# System prompt (optional, overrides default)
+system_prompt: |
+  You are CloseClaw, a safe and precise AI assistant.
+  Follow all security guidelines.
+
+# Logging
+log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+
+# State persistence
+state_file: "state.json"
+interaction_log_file: "interaction.md"
+"""
+        
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(example_config)
+            logger.info(f"Example config created at {output_path}")
+        except Exception as e:
+            logger.error(f"Failed to create example config: {e}")
