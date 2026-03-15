@@ -1,6 +1,10 @@
-"""Shell command execution tools."""
+"""Shell command execution tools.
 
-import subprocess
+Uses asyncio.create_subprocess_shell for true non-blocking execution,
+enabling safe TaskManager integration.
+"""
+
+import asyncio
 import logging
 from typing import Any, Optional
 import platform
@@ -28,7 +32,11 @@ logger = logging.getLogger(__name__)
     }
 )
 async def shell_impl(command: str, timeout: int = 30) -> dict[str, Any]:
-    """Execute shell command and return output.
+    """Execute shell command asynchronously and return output.
+    
+    Uses asyncio.create_subprocess_shell for non-blocking execution.
+    This ensures the event loop remains responsive while the command runs,
+    which is critical for TaskManager background task support.
     
     Returns:
         {
@@ -39,39 +47,46 @@ async def shell_impl(command: str, timeout: int = 30) -> dict[str, Any]:
         }
     """
     try:
-        logger.info(f"Executing shell command: {command[:100]}")
+        logger.info(f"Executing shell command (async): {command[:100]}")
         
-        # Determine shell based on OS
-        shell_type = "cmd.exe" if platform.system() == "Windows" else "/bin/bash"
-        use_shell = True
-        
-        # Execute command
-        process = subprocess.run(
+        # Create async subprocess
+        process = await asyncio.create_subprocess_shell(
             command,
-            shell=use_shell,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
+        
+        # Wait for completion with timeout
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            # Kill the process on timeout
+            process.kill()
+            await process.wait()
+            logger.error(f"Shell command timed out after {timeout}s: {command[:100]}")
+            return {
+                "returncode": -1,
+                "stdout": "",
+                "stderr": f"Command timed out after {timeout} seconds",
+                "executed": False,
+            }
+        
+        stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+        stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
         
         result = {
             "returncode": process.returncode,
-            "stdout": process.stdout,
-            "stderr": process.stderr,
+            "stdout": stdout,
+            "stderr": stderr,
             "executed": True,
         }
         
         logger.info(f"Shell command executed: retcode={process.returncode}")
         return result
         
-    except subprocess.TimeoutExpired:
-        logger.error(f"Shell command timed out after {timeout}s: {command[:100]}")
-        return {
-            "returncode": -1,
-            "stdout": "",
-            "stderr": f"Command timed out after {timeout} seconds",
-            "executed": False,
-        }
     except Exception as e:
         logger.error(f"Shell execution error: {e}")
         return {
