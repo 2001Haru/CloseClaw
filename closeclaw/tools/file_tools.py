@@ -148,17 +148,33 @@ async def list_files_impl(path: str, recursive: bool = False) -> list[str]:
     """List files in directory."""
     try:
         files = []
+        # Hard limit to prevent token overflow on massive directories
+        MAX_FILES = 500
+        limit_reached = False
+        
         if recursive:
             for root, dirs, filenames in os.walk(path):
+                if limit_reached:
+                    break
                 for f in filenames:
+                    if len(files) >= MAX_FILES:
+                        limit_reached = True
+                        break
                     files.append(os.path.join(root, f))
         else:
             for f in os.listdir(path):
+                if len(files) >= MAX_FILES:
+                    limit_reached = True
+                    break
                 full_path = os.path.join(path, f)
                 if os.path.isfile(full_path):
                     files.append(full_path)
         
-        logger.info(f"Listed files in {path}: {len(files)} files")
+        if limit_reached:
+            logger.warning(f"File limit reached when listing {path}. Only returning first {MAX_FILES}.")
+            files.append(f"... (Truncated. Only first {MAX_FILES} files shown out of many.)")
+            
+        logger.info(f"Listed files in {path}: {len(files)} items")
         return files
     except Exception as e:
         logger.error(f"Error listing files in {path}: {e}")

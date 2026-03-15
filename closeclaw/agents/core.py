@@ -441,6 +441,11 @@ class AgentCore:
                         content = "Operation requires user authorization. Waiting for approval."
                     else:
                         content = f"Error or Blocked ({tr.status}): {tr.error}"
+                    
+                    # Hard limit to prevent token overflows
+                    MAX_RESULT_CHARS = 10000
+                    if len(content) > MAX_RESULT_CHARS:
+                        content = content[:MAX_RESULT_CHARS] + f"\n\n... [Output truncated because it exceeded {MAX_RESULT_CHARS} characters]"
                         
                     messages.append({
                         "role": "tool",
