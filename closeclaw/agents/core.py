@@ -369,14 +369,50 @@ class AgentCore:
         return messages
     
     def _format_tools_for_llm(self) -> list[dict[str, Any]]:
-        """Format registered tools for LLM function calling."""
+        """Format registered tools for LLM function calling.
+        
+        Outputs OpenAI-standard format:
+        {
+            "type": "function",
+            "function": {
+                "name": "...",
+                "description": "...",
+                "parameters": {
+                    "type": "object",
+                    "properties": {...},
+                    "required": [...]
+                }
+            }
+        }
+        """
         tools_list = []
         for tool in self.tools.values():
+            # Build JSON Schema parameters from tool.parameters
+            properties = {}
+            required = []
+            
+            for param_name, param_info in (tool.parameters or {}).items():
+                prop = {
+                    "type": param_info.get("type", "string"),
+                    "description": param_info.get("description", ""),
+                }
+                properties[param_name] = prop
+                
+                # Treat all params as required unless explicitly optional
+                if not param_info.get("optional", False):
+                    required.append(param_name)
+            
             tools_list.append({
-                "name": tool.name,
-                "description": tool.description,
-                "zone": tool.zone.value,
-                "parameters": tool.parameters,
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": properties,
+                        "required": required,
+                    },
+                },
             })
         return tools_list
     
