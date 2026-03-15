@@ -147,6 +147,18 @@ class TelegramChannel(BaseChannel):
         
         bot = self._app.bot
         
+        # Helper to safely send message with Markdown fallback
+        async def safe_send(text: str, **kwargs: Any) -> None:
+            try:
+                await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", **kwargs)
+            except Exception as e:
+                # If Markdown parsing fails (e.g., raw JSON with underscores), fallback to plain text
+                if "parse entities" in str(e).lower() or "markdown" in str(e).lower():
+                    logger.warning(f"Telegram Markdown parse error, falling back to plain text: {e}")
+                    await bot.send_message(chat_id=chat_id, text=text, **kwargs)
+                else:
+                    raise
+        
         if resp_type == "response":
             text = response.get("response", "")
             tool_calls = response.get("tool_calls", [])
@@ -170,13 +182,8 @@ class TelegramChannel(BaseChannel):
                 parts.append(text)
             
             full_text = "\n".join(parts) if parts else "OK"
+            await safe_send(full_text)
             
-            await bot.send_message(
-                chat_id=chat_id,
-                text=full_text,
-                parse_mode="Markdown",
-            )
-        
         elif resp_type == "auth_request":
             await self._send_auth_request_message(chat_id, response)
         
@@ -193,19 +200,11 @@ class TelegramChannel(BaseChannel):
                 result_str = str(result)[:500]
                 text += f"\nResult: {result_str}"
             
-            await bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode="Markdown",
-            )
-        
+            await safe_send(text)
+            
         elif resp_type == "error":
             error = response.get("error", "Unknown error")
-            await bot.send_message(
-                chat_id=chat_id,
-                text=f"❌ *Error:* {error}",
-                parse_mode="Markdown",
-            )
+            await safe_send(f"❌ *Error:* {error}")
     
     async def send_auth_request(self,
                                 auth_request_id: str,
