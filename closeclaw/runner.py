@@ -174,16 +174,31 @@ async def run_channel(agent: AgentCore,
         session_id = f"{config.agent_id}_{channel.channel_type.value}"
         user_id = config.safety.admin_user_ids[0] if config.safety.admin_user_ids else "default"
         
-        # Run agent loop with channel as I/O
-        # We wrap send_response to inject chat_id metadata
+        # Track the last received message's metadata for response routing
+        # This is needed because AgentCore is channel-agnostic and doesn't
+        # carry platform-specific metadata (like chat_id) through responses.
+        last_message_metadata: dict[str, Any] = {}
+        
+        async def input_fn():
+            """Wrap channel.receive_message to capture metadata."""
+            nonlocal last_message_metadata
+            msg = await channel.receive_message()
+            if msg and hasattr(msg, 'metadata'):
+                last_message_metadata = msg.metadata or {}
+            return msg
+        
         async def output_fn(response: dict[str, Any]) -> None:
+            """Inject platform-specific metadata into response before sending."""
+            # Inject _chat_id from last received message
+            if "_chat_id" not in response and "_chat_id" in last_message_metadata:
+                response["_chat_id"] = last_message_metadata["_chat_id"]
             await channel.send_response(response)
         
         await agent.run(
             session_id=session_id,
             user_id=user_id,
             channel_type=channel.channel_type.value,
-            message_input_fn=channel.receive_message,
+            message_input_fn=input_fn,
             message_output_fn=output_fn,
         )
         
