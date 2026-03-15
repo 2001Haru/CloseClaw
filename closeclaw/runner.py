@@ -229,6 +229,12 @@ async def run_agent(config_path: str, llm_provider: Any = None) -> None:
     # Create shared agent
     agent = create_agent(config, llm_provider)
     
+    # Load global state from disk before taking any actions
+    try:
+        await agent.load_state_from_disk()
+    except Exception as e:
+        logger.error(f"Failed to initialize agent state from disk: {e}")
+    
     # Create channels
     channels = []
     for ch_config in config.channels:

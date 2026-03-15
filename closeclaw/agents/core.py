@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from typing import Any, Optional, Protocol
 from datetime import datetime
 
@@ -728,7 +729,7 @@ class AgentCore:
             logger.info(f"Agent.run() ended for session={session_id}")
     
     async def _save_state(self) -> dict[str, Any]:
-        """Save agent state to dict (for persistence to state.json).
+        """Save agent state to dict and persist to state.json.
         
         Structure for state.json:
         {
@@ -740,13 +741,17 @@ class AgentCore:
             "pending_auth_requests": {...},  # Outstanding auth requests
         }
         """
+        import json
         state_dict = {
             "version": "0.1",
             "agent_state": self.state.value,
             "last_save_time": datetime.utcnow().isoformat(),
             "message_history": [msg.to_dict() if hasattr(msg, 'to_dict') else str(msg) 
                                for msg in self.message_history],
-            "pending_auth_requests": self.pending_auth_requests,
+            # Serializing auth requests might be tricky if they contain complex types, 
+            # simplest approach is to exclude or selectively serialize. For now, empty them for persistence
+            # since auths shouldn't usually outlast a restart.
+            "pending_auth_requests": {}, 
         }
         
         # Include TaskManager state if available
@@ -756,11 +761,45 @@ class AgentCore:
         else:
             state_dict["active_tasks"] = {}
             state_dict["completed_results"] = {}
+            
+        # Write to disk
+        if hasattr(self.config, 'state_file') and self.config.state_file:
+            # Assume workspace_root exists or default to current dir
+            root = getattr(self, 'workspace_root', '.')
+            path = os.path.join(root, self.config.state_file)
+            try:
+                # Write to temp file then rename for atomic save
+                temp_path = f"{path}.tmp"
+                with open(temp_path, 'w', encoding='utf-8') as f:
+                    json.dump(state_dict, f, ensure_ascii=False, indent=2)
+                os.replace(temp_path, path)
+            except Exception as e:
+                logger.error(f"Failed to persist state to {path}: {e}")
         
         return state_dict
     
+    async def load_state_from_disk(self) -> None:
+        """Attempt to restore state from state.json on disk."""
+        if not hasattr(self.config, 'state_file') or not self.config.state_file:
+            return
+            
+        root = getattr(self, 'workspace_root', '.')
+        path = os.path.join(root, self.config.state_file)
+        
+        if not os.path.exists(path):
+            return
+            
+        try:
+            import json
+            with open(path, 'r', encoding='utf-8') as f:
+                state_dict = json.load(f)
+            await self._restore_state(state_dict)
+            logger.info(f"Loaded persisted agent state from {path}")
+        except Exception as e:
+            logger.error(f"Failed to load state from {path}: {e}")
+    
     async def _restore_state(self, state_dict: dict[str, Any]) -> None:
-        """Restore agent state from persistence (state.json).
+        """Restore agent state from dictionary (state.json).
         
         Restores:
         - Message history
@@ -769,8 +808,29 @@ class AgentCore:
         """
         # Restore message history
         if "message_history" in state_dict:
-            # Simple restoration - full implementation depends on Message.from_dict()
-            logger.info(f"Restored {len(state_dict['message_history'])} messages from state")
+            try:
+                # Need to convert dicts back to Message objects if possible
+                from ..types import Message
+                history = []
+                for msg_data in state_dict["message_history"]:
+                    if isinstance(msg_data, dict):
+                        # Convert ISO format back to object or let constructor handle it if it supports string
+                        # Since from_dict doesn't exist out of the box, we assign directly:
+                        # (We'd need a robust from_dict but let's do simple mapping)
+                        content = msg_data.get("content", "")
+                        sender_id = msg_data.get("sender_id", "")
+                        sender_name = msg_data.get("sender_name", "")
+                        history.append(Message(
+                            id=msg_data.get("id", ""),
+                            channel_type=msg_data.get("channel_type", "cli"),
+                            sender_id=sender_id,
+                            sender_name=sender_name,
+                            content=content,
+                        ))
+                self.message_history = history
+                logger.info(f"Restored {len(self.message_history)} messages from state")
+            except Exception as e:
+                logger.error(f"Error restoring message history: {e}")
         
         # Restore TaskManager state
         if hasattr(self, 'task_manager') and self.task_manager:
