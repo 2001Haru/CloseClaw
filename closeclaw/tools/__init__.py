@@ -11,6 +11,7 @@ from .file_tools import (
 )
 from .shell_tools import shell_impl, pwd_impl
 from .web_tools import web_search_impl
+from .adaptation import ToolAdaptationLayer, ExecutionMode, ToolMetadata
 from ..types import Tool, ToolType
 
 __all__ = [
@@ -23,6 +24,10 @@ __all__ = [
     # Types
     "Tool",
     "ToolType",
+    # Tool adaptation (Phase 2)
+    "ToolAdaptationLayer",
+    "ExecutionMode",
+    "ToolMetadata",
     # File tools
     "read_file_impl",
     "write_file_impl",

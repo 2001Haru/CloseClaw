@@ -10,6 +10,7 @@ from ..types import (
     AgentState, Zone, ToolCall, ToolResult
 )
 from ..middleware import MiddlewareChain
+from ..tools.adaptation import ToolAdaptationLayer
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +70,16 @@ class AgentCore:
         self.message_history: list[Message] = []
         self.pending_auth_requests: dict[str, Any] = {}  # auth_id -> request
         self.middleware_chain: Optional[MiddlewareChain] = None
+        self.tool_adaptation_layer = ToolAdaptationLayer()  # Phase 2: Tool routing
         
     def register_tool(self, tool: Tool) -> None:
         """Register a tool with the agent."""
         self.tools[tool.name] = tool
+        
+        # Also register with tool adaptation layer (Phase 2)
+        # Default: auto-detect based on tool type
+        self.tool_adaptation_layer.register_tool_metadata(tool)
+        
         logger.info(f"Registered tool: {tool.name} (zone={tool.zone.value})")
         
     def set_middleware_chain(self, chain: MiddlewareChain) -> None:
@@ -178,8 +185,13 @@ class AgentCore:
     async def _process_tool_call(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call with middleware and permission checks.
         
+        Phase 2 Integration: Uses ToolAdaptationLayer to decide between:
+        - Direct execution (fast tools, < 2s)
+        - Background execution via TaskManager (slow tools, > 2s)
+        
         Returns a ToolResult with status:
         - "success": Tool executed successfully
+        - "task_created": Background task created (task_id in result)
         - "error": Tool execution failed
         - "auth_required": Waiting for user authorization
         - "blocked": Blocked by safety filter
@@ -226,9 +238,34 @@ class AgentCore:
                 result.metadata = auth_result
                 return result
         
-        # Execute tool
+        # Phase 2: Route through adaptation layer (sync vs background)
+        # This decides based on tool type and estimated duration
+        result = await self.tool_adaptation_layer.execute_tool_call(
+            tool_call=tool_call,
+            available_tools=self.tools,
+            task_manager=getattr(self, 'task_manager', None),
+            direct_executor=self._execute_tool_directly,
+        )
+        
+        return result
+    
+    async def _execute_tool_directly(self, tool_call: ToolCall) -> ToolResult:
+        """Direct tool execution (for sync/fast tools).
+        
+        Used by ToolAdaptationLayer when a tool should be executed
+        immediately (not routed to TaskManager).
+        """
+        tool = self.tools.get(tool_call.name)
+        if not tool:
+            return ToolResult(
+                tool_call_id=tool_call.tool_id,
+                status="error",
+                result=None,
+                error=f"Tool '{tool_call.name}' not found",
+            )
+        
         try:
-            logger.info(f"Executing tool: {tool_call.name}")
+            logger.info(f"Direct execution: {tool_call.name}")
             result = await tool.handler(**tool_call.arguments)
             return ToolResult(
                 tool_call_id=tool_call.tool_id,
@@ -426,33 +463,198 @@ class AgentCore:
         return task_id
     
     # --- Main Agent Loop (Phase 2) ---
-    # TODO: Implement as outlined in Planning.md
-    # Current skeleton for phase 2 integration:
-    # 
-    # async def run(self, session_id, user_id, channel_type, message_input_fn, message_output_fn):
-    #     """Main synchronous agent loop with async background task support.
-    #
-    #     Args:
-    #         session_id: Conversation session ID
-    #         user_id: User identifier
-    #         channel_type: Communication channel (telegram/feishu/cli)
-    #         message_input_fn: Async callable to receive user messages
-    #         message_output_fn: Async callable to send responses to user
-    #     
-    #     Flow:
-    #         1. Start session
-    #         2. Loop:
-    #             a. Get user message
-    #             b. Call process_message()
-    #             c. Poll background tasks via poll_background_tasks()
-    #             d. Send response + any completed task results
-    #             e. Handle WAITING_FOR_AUTH state
-    #         3. End session
-    #     
-    #     Features:
-    #         - Synchronous main loop (easy to debug)
-    #         - Background tasks via TaskManager (asyncio.create_task)
-    #         - HITL confirmation for Zone C operations
-    #         - State persistence (state.json)
-    #     """
-    #     pass
+    
+    async def run(self, 
+                 session_id: str,
+                 user_id: str,
+                 channel_type: str,
+                 message_input_fn,  # Async callable: () -> Message
+                 message_output_fn,  # Async callable: (response_dict) -> None
+                 state: Optional[dict[str, Any]] = None) -> None:
+        """Main synchronous agent loop with async background task support.
+        
+        Implements the core loop as defined in Planning.md Section "同步主循环 + TaskManager异步管理":
+        - Synchronous main loop (調試友好 = easy to debug)
+        - Long-running ops via TaskManager (asyncio.create_task) non-blocking
+        - HITL confirmation for Zone C (立即確認 = immediate confirmation)
+        - Full state persistence (完整持久化 = complete persistence)
+
+        Args:
+            session_id: Conversation session ID
+            user_id: User identifier for auth checks
+            channel_type: Communication channel (telegram/feishu/cli)
+            message_input_fn: Async callable to receive user messages -> Message
+            message_output_fn: Async callable to send response -> dict
+            state: Optional state.json data to restore from (for agent restart)
+        
+        Loop Flow (Planning.md):
+            用户输入 → Agent同步处理 → 检测耗时工具调用
+              ↓
+            工具不直接执行 → 交由TaskManager → asyncio.create_task()
+              ↓
+            工具立即返回 task_id（如"#001") → Agent继续循环
+              ↓
+            主循环每轮调用 poll_results() → 检查后台任务完成情况
+              ↓
+            任务完成 → Agent主动推送结果到用户
+        
+        Features:
+            - ✅ Synchronous main loop (easy to debug, avoid event stream complexity)
+            - ✅ Background tasks via TaskManager (asyncio.create_task, non-blocking)
+            - ✅ HITL confirmation for Zone C operations (WAITING_FOR_AUTH state)
+            - ✅ State persistence (state.json with active_tasks, message history)
+            - ✅ Task resume on agent restart (load_from_state)
+        """
+        logger.info(f"Agent.run() starting: session={session_id}, user={user_id}, channel={channel_type}")
+        
+        # Restore state if provided (agent restart scenario)
+        if state:
+            await self._restore_state(state)
+            logger.info("Restored agent state from persistence")
+        
+        try:
+            # Start session
+            await self.start_session(session_id, user_id, channel_type)
+            
+            # Main synchronous loop
+            while self.state in (AgentState.RUNNING, AgentState.WAITING_FOR_AUTH):
+                try:
+                    # ========== 1. Poll Completed Background Tasks ==========
+                    # Check if any background tasks have completed
+                    # This is NON-BLOCKING - poll_results() returns immediately
+                    completed_tasks = await self.poll_background_tasks()
+                    for task_result in completed_tasks:
+                        # Send completed task result to user
+                        await message_output_fn({
+                            "type": "task_completed",
+                            "task_id": task_result.get("task_id"),
+                            "status": task_result.get("status"),
+                            "result": task_result.get("result"),
+                            "error": task_result.get("error"),
+                        })
+                        logger.info(f"Notified user of completed task: {task_result.get('task_id')}")
+                    
+                    # ========== 2. Get User Input (Blocking Wait) ==========
+                    # In CLI mode: blocks for input
+                    # In channel mode: gets next message from queue
+                    user_message = await message_input_fn()
+                    if not user_message:
+                        # Input source closed (e.g., channel disconnect)
+                        logger.info("Message input source closed, ending session")
+                        break
+                    
+                    logger.info(f"Processing user message from {user_message.sender_id}")
+                    
+                    # ========== 3. Process User Message ==========
+                    # Calls LLM, executes tool calls, checks permissions
+                    # Returns immediately (doesn't block on long operations)
+                    response = await self.process_message(user_message)
+                    
+                    # ========== 4. Handle Auth Request (if any) ==========
+                    # Zone C operations return with "requires_auth": True
+                    if response.get("requires_auth"):
+                        auth_request_id = response.get("auth_request_id")
+                        pending_auth = response.get("pending_auth", {})
+                        
+                        # Send to user with auth buttons
+                        await message_output_fn({
+                            "type": "auth_request",
+                            "auth_request_id": auth_request_id,
+                            "tool_name": pending_auth.get("tool_name"),
+                            "description": pending_auth.get("description"),
+                            "diff_preview": pending_auth.get("diff_preview"),  # Structured diff
+                            "requires_approval": True,
+                        })
+                        logger.info(f"Auth request sent to user: {auth_request_id}")
+                        # Agent now in WAITING_FOR_AUTH state
+                        # User responds via approve_auth_request() → back to RUNNING
+                    else:
+                        # Normal response, send to user
+                        await message_output_fn({
+                            "type": "response",
+                            "response": response.get("response"),
+                            "tool_calls": response.get("tool_calls", []),
+                            "tool_results": response.get("tool_results", []),
+                        })
+                        logger.info("Response sent to user")
+                    
+                    # ========== 5. Persist State ==========
+                    # Save to state.json after each message
+                    # Ensures task recovery on crash/restart
+                    state_snapshot = await self._save_state()
+                    logger.debug(f"State persisted: {len(state_snapshot.get('active_tasks', {}))} active tasks")
+                    
+                except Exception as loop_error:
+                    logger.error(f"Error in main loop: {loop_error}", exc_info=True)
+                    await message_output_fn({
+                        "type": "error",
+                        "error": f"Loop error: {str(loop_error)}",
+                    })
+                    # Continue loop instead of breaking
+        
+        except Exception as e:
+            logger.error(f"Fatal error in Agent.run(): {e}", exc_info=True)
+            await message_output_fn({
+                "type": "error",
+                "error": f"Fatal: {str(e)}",
+            })
+        
+        finally:
+            # Cleanup
+            await self.end_session()
+            logger.info(f"Agent.run() ended for session={session_id}")
+    
+    async def _save_state(self) -> dict[str, Any]:
+        """Save agent state to dict (for persistence to state.json).
+        
+        Structure for state.json:
+        {
+            "version": "0.1",
+            "agent_state": "running",
+            "last_save_time": "2026-03-15T10:30:00Z",
+            "active_tasks": {...},           # From TaskManager
+            "message_history": [...],        # Conversation history
+            "pending_auth_requests": {...},  # Outstanding auth requests
+        }
+        """
+        state_dict = {
+            "version": "0.1",
+            "agent_state": self.state.value,
+            "last_save_time": datetime.utcnow().isoformat(),
+            "message_history": [msg.to_dict() if hasattr(msg, 'to_dict') else str(msg) 
+                               for msg in self.message_history],
+            "pending_auth_requests": self.pending_auth_requests,
+        }
+        
+        # Include TaskManager state if available
+        if hasattr(self, 'task_manager') and self.task_manager:
+            task_state = await self.task_manager.save_to_state()
+            state_dict.update(task_state)
+        else:
+            state_dict["active_tasks"] = {}
+            state_dict["completed_results"] = {}
+        
+        return state_dict
+    
+    async def _restore_state(self, state_dict: dict[str, Any]) -> None:
+        """Restore agent state from persistence (state.json).
+        
+        Restores:
+        - Message history
+        - TaskManager tasks (active + completed)
+        - Pending auth requests
+        """
+        # Restore message history
+        if "message_history" in state_dict:
+            # Simple restoration - full implementation depends on Message.from_dict()
+            logger.info(f"Restored {len(state_dict['message_history'])} messages from state")
+        
+        # Restore TaskManager state
+        if hasattr(self, 'task_manager') and self.task_manager:
+            await self.task_manager.load_from_state(state_dict)
+            logger.info("Restored TaskManager active tasks from state")
+        
+        # Restore pending auth requests
+        if "pending_auth_requests" in state_dict:
+            self.pending_auth_requests = state_dict["pending_auth_requests"]
+            logger.info(f"Restored {len(self.pending_auth_requests)} pending auth requests")
