@@ -49,7 +49,8 @@ class AgentCore:
                  llm_provider: LLMProvider,
                  config: AgentConfig,
                  workspace_root: str,
-                 admin_user_id: Optional[str] = None):
+                 admin_user_id: Optional[str] = None,
+                 state_file: Optional[str] = None):
         """Initialize agent core.
         
         Args:
@@ -58,12 +59,14 @@ class AgentCore:
             config: Agent configuration
             workspace_root: Root directory for file operations (sandboxing)
             admin_user_id: User ID authorized for HITL approval
+            state_file: Path to state persistence file (relative to workspace_root)
         """
         self.agent_id = agent_id
         self.llm_provider = llm_provider
         self.config = config
         self.workspace_root = workspace_root
         self.admin_user_id = admin_user_id
+        self.state_file = state_file
         
         self.state = AgentState.IDLE
         self.current_session: Optional[Session] = None
@@ -91,16 +94,25 @@ class AgentCore:
                            session_id: str,
                            user_id: str,
                            channel_type: str) -> Session:
-        """Start a new conversation session."""
+        """Start a new conversation session.
+        
+        Note: Does NOT wipe message_history if it was already populated
+        (e.g. from load_state_from_disk). Only initializes to [] if empty.
+        """
         session = Session(
             session_id=session_id,
             user_id=user_id,
             channel_type=channel_type,
         )
         self.current_session = session
-        self.message_history = []
+        # Preserve history loaded from state.json; only init if truly empty
+        if not self.message_history:
+            self.message_history = []
+            logger.info(f"[DEBUG] start_session: message_history was empty, initialized fresh")
+        else:
+            logger.info(f"[DEBUG] start_session: PRESERVING {len(self.message_history)} existing messages")
         self.state = AgentState.RUNNING
-        logger.info(f"Started session {session_id} for user {user_id}")
+        logger.info(f"Started session {session_id} for user {user_id} (history={len(self.message_history)} msgs)")
         return session
         
     async def process_message(self, message: Message) -> dict[str, Any]:
@@ -165,8 +177,17 @@ class AgentCore:
                     self.state = AgentState.WAITING_FOR_AUTH
                     break  # Stop processing further tools until auth
         
-        # If auth required, return early
+        # If auth required, return early but FIRST save to history!
         if pending_auth:
+            self.message_history.append(Message(
+                id=f"msg_{datetime.utcnow().timestamp()}",
+                channel_type=self.current_session.channel_type if self.current_session else "unknown",
+                sender_id=self.agent_id,
+                sender_name="Agent",
+                content=llm_response or "Executing tools... (Authorization Required)",
+                tool_calls=tool_calls,
+                tool_results=tool_results,
+            ))
             return {
                 "response": llm_response or "Awaiting authorization...",
                 "tool_calls": [tc.to_dict() for tc in tool_calls] if tool_calls else [],
@@ -341,13 +362,12 @@ class AgentCore:
             "result": any (if approved and re-executed)
         }
         """
-        if user_id != self.admin_user_id:
-            logger.warning(f"Unauthorized auth approval attempt from {user_id}")
-            return {
-                "auth_request_id": auth_request_id,
-                "status": "error",
-                "error": "Not authorized to approve",
-            }
+        # NOTE: The channel already verified that the user is an admin 
+        # (e.g. TelegramChannel checks admin_user_ids before resolving the future).
+        # So we trust the channel-level check here. Only warn if admin_user_id is
+        # set and doesn't match, but still proceed since the channel already validated.
+        if self.admin_user_id and user_id != self.admin_user_id:
+            logger.info(f"Auth approval from channel-verified user {user_id} (core admin_user_id={self.admin_user_id})")
         
         if not approved:
             self.state = AgentState.RUNNING
@@ -378,8 +398,17 @@ class AgentCore:
                 "error": f"Tool '{tool_name}' not found",
             }
         
+        # The permissions middleware needs _force_execute in the arguments
+        # for logging and bypassing, but the actual tool handler signature
+        # doesn't accept it. We extract it before calling the handler.
+        _force = arguments.pop("_force_execute", False)
+        
         try:
             result = await tool.handler(**arguments)
+            # Restore it in case arguments dict is reused
+            if _force:
+                arguments["_force_execute"] = True
+            
             self.state = AgentState.RUNNING
             return {
                 "auth_request_id": auth_request_id,
@@ -398,6 +427,7 @@ class AgentCore:
     def _format_conversation_for_llm(self) -> list[dict[str, Any]]:
         """Format conversation history for LLM input."""
         import json
+        logger.info(f"[DEBUG] _format_conversation_for_llm: processing {len(self.message_history)} raw messages from history")
         messages = []
         
         # Add system prompt
@@ -594,6 +624,7 @@ class AgentCore:
                  channel_type: str,
                  message_input_fn,  # Async callable: () -> Message
                  message_output_fn,  # Async callable: (response_dict) -> None
+                 auth_response_fn=None,  # Async callable: (auth_request_id, timeout) -> AuthorizationResponse|None
                  state: Optional[dict[str, Any]] = None) -> None:
         """Main synchronous agent loop with async background task support.
         
@@ -686,12 +717,135 @@ class AgentCore:
                             "auth_request_id": auth_request_id,
                             "tool_name": pending_auth.get("tool_name"),
                             "description": pending_auth.get("description"),
-                            "diff_preview": pending_auth.get("diff_preview"),  # Structured diff
+                            "diff_preview": pending_auth.get("diff_preview"),
                             "requires_approval": True,
                         })
                         logger.info(f"Auth request sent to user: {auth_request_id}")
-                        # Agent now in WAITING_FOR_AUTH state
-                        # User responds via approve_auth_request() → back to RUNNING
+                        
+                        # ========== 4b. Await Auth Response OR New Message ==========
+                        # We must listen to BOTH auth responses and new chat messages.
+                        # If a new message arrives, we cancel the auth request.
+                        if auth_response_fn:
+                            logger.info(f"[DEBUG] Awaiting auth_response_fn for {auth_request_id}...")
+                            
+                            auth_task = asyncio.create_task(auth_response_fn(auth_request_id, 300.0))
+                            msg_task = asyncio.create_task(message_input_fn())
+                            
+                            done, pending = await asyncio.wait(
+                                [auth_task, msg_task], 
+                                return_when=asyncio.FIRST_COMPLETED
+                            )
+                            
+                            # Clean up pending tasks
+                            for task in pending:
+                                task.cancel()
+                                
+                            if msg_task in done:
+                                # User sent a new message! Cancel auth.
+                                logger.info("User sent new message during auth wait. Cancelling auth.")
+                                self.pending_auth_requests.pop(auth_request_id, None)
+                                self.state = AgentState.RUNNING
+                                
+                                # RECORD in history so agent remembers the interruption
+                                self.message_history.append(Message(
+                                    id=f"msg_{datetime.utcnow().timestamp()}_cancel",
+                                    channel_type=channel_type,
+                                    sender_id="system",
+                                    sender_name="System",
+                                    content="[System] The previous authorization request was cancelled because the user sent a new message."
+                                ))
+                                
+                                await message_output_fn({
+                                    "type": "response",
+                                    "response": "⚠️ Auth cancelled by new input.",
+                                    "tool_calls": [],
+                                    "tool_results": [],
+                                })
+                                
+                                # Process the new message immediately
+                                new_msg = msg_task.result()
+                                if new_msg:
+                                    logger.info(f"Processing interrupting message: {new_msg.content[:50]}")
+                                    response = await self.process_message(new_msg)
+                                    
+                                    # Very basic handling of the interrupting response
+                                    # Realistically, this will just loop around naturally
+                                    # but we output the immediate response here.
+                                    await message_output_fn({
+                                        "type": "response",
+                                        "response": response.get("response", ""),
+                                        "tool_calls": response.get("tool_calls", []),
+                                        "tool_results": response.get("tool_results", []),
+                                    })
+                                continue
+                                
+                            else:
+                                # Auth task finished!
+                                auth_resp = auth_task.result()
+                                if auth_resp:
+                                    approved = auth_resp.approved
+                                    auth_user = auth_resp.user_id
+                                    logger.info(f"Auth response: {'approved' if approved else 'rejected'} by {auth_user}")
+                                    
+                                    auth_result = await self.approve_auth_request(
+                                        auth_request_id=auth_request_id,
+                                        user_id=auth_user,
+                                        approved=approved,
+                                    )
+                                    
+                                    # Send the result back to user
+                                    if approved and auth_result.get("status") == "approved":
+                                        success_msg = f"✅ Operation approved. Result: {auth_result.get('result', 'OK')}"
+                                        self.message_history.append(Message(
+                                            id=f"msg_{datetime.utcnow().timestamp()}_auth_ok",
+                                            channel_type=channel_type,
+                                            sender_id="system",
+                                            sender_name="System",
+                                            content=f"[System] The authorization request was APPROVED. Tool Execution Result: {auth_result.get('result', 'OK')}"
+                                        ))
+                                        await message_output_fn({
+                                            "type": "response",
+                                            "response": success_msg,
+                                            "tool_calls": [],
+                                            "tool_results": [],
+                                        })
+                                    else:
+                                        reason = auth_result.get("error", "Rejected by user")
+                                        self.message_history.append(Message(
+                                            id=f"msg_{datetime.utcnow().timestamp()}_auth_fail",
+                                            channel_type=channel_type,
+                                            sender_id="system",
+                                            sender_name="System",
+                                            content=f"[System] The authorization request was REJECTED or FAILED. Error: {reason}"
+                                        ))
+                                        await message_output_fn({
+                                            "type": "response",
+                                            "response": f"❌ Operation {auth_result.get('status', 'rejected')}: {reason}",
+                                            "tool_calls": [],
+                                            "tool_results": [],
+                                        })
+                                else:
+                                    # Timed out or no response
+                                    logger.warning(f"Auth request {auth_request_id} timed out")
+                                    self.pending_auth_requests.pop(auth_request_id, None)
+                                    self.state = AgentState.RUNNING
+                                    
+                                    self.message_history.append(Message(
+                                        id=f"msg_{datetime.utcnow().timestamp()}_auth_timeout",
+                                        channel_type=channel_type,
+                                        sender_id="system",
+                                        sender_name="System",
+                                        content="[System] The authorization request TIMED OUT. The operation was cancelled."
+                                    ))
+                                    
+                                    await message_output_fn({
+                                        "type": "response",
+                                        "response": "⏰ Authorization request timed out. Operation cancelled.",
+                                        "tool_calls": [],
+                                        "tool_results": [],
+                                    })
+                        # If no auth_response_fn, the old behavior applies:
+                        # agent stays in WAITING_FOR_AUTH and user can send a new message
                     else:
                         # Normal response, send to user
                         await message_output_fn({
@@ -763,37 +917,45 @@ class AgentCore:
             state_dict["completed_results"] = {}
             
         # Write to disk
-        if hasattr(self.config, 'state_file') and self.config.state_file:
+        if hasattr(self, 'state_file') and self.state_file:
             # Assume workspace_root exists or default to current dir
             root = getattr(self, 'workspace_root', '.')
-            path = os.path.join(root, self.config.state_file)
+            path = os.path.join(root, self.state_file)
             try:
                 # Write to temp file then rename for atomic save
                 temp_path = f"{path}.tmp"
                 with open(temp_path, 'w', encoding='utf-8') as f:
                     json.dump(state_dict, f, ensure_ascii=False, indent=2)
                 os.replace(temp_path, path)
+                logger.info(f"[DEBUG] _save_state: saved {len(self.message_history)} messages to {path}")
             except Exception as e:
                 logger.error(f"Failed to persist state to {path}: {e}")
+        else:
+            logger.warning(f"[DEBUG] _save_state: state_file not set! state_file={getattr(self, 'state_file', 'N/A')}")
         
         return state_dict
     
     async def load_state_from_disk(self) -> None:
         """Attempt to restore state from state.json on disk."""
-        if not hasattr(self.config, 'state_file') or not self.config.state_file:
+        logger.info(f"[DEBUG] load_state_from_disk: state_file={getattr(self, 'state_file', 'N/A')}, workspace_root={getattr(self, 'workspace_root', 'N/A')}")
+        if not hasattr(self, 'state_file') or not self.state_file:
+            logger.warning(f"[DEBUG] load_state_from_disk: NO state_file configured, skipping")
             return
             
         root = getattr(self, 'workspace_root', '.')
-        path = os.path.join(root, self.config.state_file)
+        path = os.path.join(root, self.state_file)
         
         if not os.path.exists(path):
+            logger.info(f"[DEBUG] load_state_from_disk: file {path} does not exist")
             return
             
         try:
             import json
             with open(path, 'r', encoding='utf-8') as f:
                 state_dict = json.load(f)
+            logger.info(f"[DEBUG] load_state_from_disk: loaded JSON from {path}, message_history has {len(state_dict.get('message_history', []))} entries")
             await self._restore_state(state_dict)
+            logger.info(f"[DEBUG] load_state_from_disk: after _restore_state, self.message_history has {len(self.message_history)} entries")
             logger.info(f"Loaded persisted agent state from {path}")
         except Exception as e:
             logger.error(f"Failed to load state from {path}: {e}")
@@ -814,19 +976,7 @@ class AgentCore:
                 history = []
                 for msg_data in state_dict["message_history"]:
                     if isinstance(msg_data, dict):
-                        # Convert ISO format back to object or let constructor handle it if it supports string
-                        # Since from_dict doesn't exist out of the box, we assign directly:
-                        # (We'd need a robust from_dict but let's do simple mapping)
-                        content = msg_data.get("content", "")
-                        sender_id = msg_data.get("sender_id", "")
-                        sender_name = msg_data.get("sender_name", "")
-                        history.append(Message(
-                            id=msg_data.get("id", ""),
-                            channel_type=msg_data.get("channel_type", "cli"),
-                            sender_id=sender_id,
-                            sender_name=sender_name,
-                            content=content,
-                        ))
+                        history.append(Message.from_dict(msg_data))
                 self.message_history = history
                 logger.info(f"Restored {len(self.message_history)} messages from state")
             except Exception as e:

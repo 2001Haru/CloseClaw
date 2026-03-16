@@ -94,12 +94,24 @@ class TelegramChannel(BaseChannel):
             CallbackQueryHandler(self._on_callback_query)
         )
         
+        # Raw update handler for debug
+        from telegram.ext import TypeHandler
+        async def _raw_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            import json
+            logger.info(f"[DEBUG] RAW UPDATE RECEIVED: {update.to_json()}")
+        
+        self._app.add_handler(TypeHandler(Update, _raw_update), group=-1)
+        
         # Initialize and start polling
+        from telegram.constants import UpdateType
         await self._app.initialize()
         await self._app.start()
-        await self._app.updater.start_polling(drop_pending_updates=True)
+        await self._app.updater.start_polling(
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES
+        )
         
-        logger.info("Telegram channel started (long polling)")
+        logger.info("Telegram channel started (long polling, ALL updates allowed)")
     
     async def stop(self) -> None:
         """Stop Telegram bot."""
@@ -248,29 +260,39 @@ class TelegramChannel(BaseChannel):
             ]
         ])
         
-        await self._app.bot.send_message(
-            chat_id=chat_id,
-            text=text,
-            reply_markup=keyboard,
-            parse_mode="Markdown",
-        )
+        try:
+            await self._app.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=keyboard,
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            if "parse entities" in str(e).lower() or "markdown" in str(e).lower():
+                logger.warning(f"Telegram Markdown parse error in auth request, falling back to plain text: {e}")
+                await self._app.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=keyboard,
+                )
+            else:
+                raise
         
         logger.info(f"Auth request sent via Telegram: {auth_request_id}")
     
     async def wait_for_auth_response(self,
                                       auth_request_id: str,
                                       timeout: float = 300.0) -> Optional[AuthorizationResponse]:
-        """Wait for user's Inline Keyboard callback response.
-        
-        Creates a Future that will be resolved when the user clicks
-        the Approve/Reject button via CallbackQuery.
-        """
+        """Wait for user's Inline Keyboard callback response."""
         loop = asyncio.get_event_loop()
         future = loop.create_future()
         self._auth_futures[auth_request_id] = future
+        logger.info(f"[DEBUG] wait_for_auth_response: created future for {auth_request_id}, timeout={timeout}s")
+        logger.info(f"[DEBUG] Active auth_futures: {list(self._auth_futures.keys())}")
         
         try:
             response = await asyncio.wait_for(future, timeout=timeout)
+            logger.info(f"[DEBUG] wait_for_auth_response: future resolved for {auth_request_id}")
             return response
         except asyncio.TimeoutError:
             logger.warning(f"Auth request timed out: {auth_request_id}")
@@ -308,10 +330,13 @@ class TelegramChannel(BaseChannel):
         
         Callback data format: "auth_yes:<auth_request_id>" or "auth_no:<auth_request_id>"
         """
+        logger.info("[DEBUG] _on_callback_query FIRED")
         query = update.callback_query
         if not query or not query.data:
+            logger.info("[DEBUG] _on_callback_query: no query or no data, returning")
             return
         
+        logger.info(f"[DEBUG] Callback data: {query.data}, from user: {query.from_user.id}")
         await query.answer()  # Acknowledge the callback
         
         data = query.data
@@ -341,12 +366,18 @@ class TelegramChannel(BaseChannel):
             auth_request_id=auth_request_id,
             user_id=user_id,
             approved=approved,
+            metadata={"_chat_id": query.message.chat_id} if query.message else {}
         )
         
         # Resolve the waiting Future
+        logger.info(f"[DEBUG] Looking up future for auth_request_id={auth_request_id}")
+        logger.info(f"[DEBUG] Available futures: {list(self._auth_futures.keys())}")
         future = self._auth_futures.get(auth_request_id)
         if future and not future.done():
+            logger.info(f"[DEBUG] Resolving future for {auth_request_id}")
             future.set_result(auth_response)
+        else:
+            logger.warning(f"[DEBUG] No active future for {auth_request_id}! future={future}")
         
         # Update the message to show result
         status_text = "✅ Approved" if approved else "❌ Rejected"

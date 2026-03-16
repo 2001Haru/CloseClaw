@@ -129,6 +129,7 @@ def create_agent(config: CloseCrawlConfig,
         config=agent_config,
         workspace_root=config.workspace_root,
         admin_user_id=config.safety.admin_user_ids[0] if config.safety.admin_user_ids else None,
+        state_file=config.state_file,
     )
     
     # Setup middleware chain (three-layer security)
@@ -194,12 +195,21 @@ async def run_channel(agent: AgentCore,
                 response["_chat_id"] = last_message_metadata["_chat_id"]
             await channel.send_response(response)
         
+        async def auth_fn(auth_request_id: str, timeout: float):
+            """Wait for user auth response via channel (e.g. Telegram inline button)."""
+            auth_resp = await channel.wait_for_auth_response(auth_request_id, timeout)
+            # If the channel provided a specific chat_id for this response, use it
+            if auth_resp and hasattr(auth_resp, "metadata") and "_chat_id" in auth_resp.metadata:
+                last_message_metadata["_chat_id"] = auth_resp.metadata["_chat_id"]
+            return auth_resp
+        
         await agent.run(
             session_id=session_id,
             user_id=user_id,
             channel_type=channel.channel_type.value,
             message_input_fn=input_fn,
             message_output_fn=output_fn,
+            auth_response_fn=auth_fn,
         )
         
     except Exception as e:

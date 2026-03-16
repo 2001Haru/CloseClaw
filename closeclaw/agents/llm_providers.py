@@ -93,6 +93,16 @@ class OpenAICompatibleProvider:
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
+            
+        import json
+        print("\n\n" + "="*80)
+        print("🚨 VERY VIOLENT DEBUG: EXACT LLM PROMPT PAYLOAD 🚨")
+        print("TOTAL MESSAGES:", len(body["messages"]))
+        for i, m in enumerate(body["messages"]):
+            print(f"--- Message {i} ({m.get('role')}) ---")
+            print(str(m)[:1000] + ("..." if len(str(m)) > 1000 else ""))
+        print("="*80 + "\n\n")
+        logger.info(f"[DEBUG] Sending {len(body['messages'])} messages to LLM")
         
         # Make API call
         url = f"{self.base_url}/chat/completions"

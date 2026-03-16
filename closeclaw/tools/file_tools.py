@@ -152,10 +152,21 @@ async def list_files_impl(path: str, recursive: bool = False) -> list[str]:
         MAX_FILES = 500
         limit_reached = False
         
+        # Calculate target depth for 'recursive'
+        # To avoid token explosion, we limit "recursive" to just 1 level deep (depth=1)
+        base_depth = path.rstrip(os.path.sep).count(os.path.sep)
+        
         if recursive:
             for root, dirs, filenames in os.walk(path):
                 if limit_reached:
                     break
+                    
+                current_depth = root.rstrip(os.path.sep).count(os.path.sep)
+                if current_depth > base_depth + 1:
+                    # Do not descend further than 1 level deep
+                    dirs.clear()
+                    continue
+                    
                 for f in filenames:
                     if len(files) >= MAX_FILES:
                         limit_reached = True

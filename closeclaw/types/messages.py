@@ -18,6 +18,14 @@ class ToolCall:
             "name": self.name,
             "arguments": self.arguments,
         }
+        
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ToolCall':
+        return cls(
+            tool_id=data["tool_id"],
+            name=data["name"],
+            arguments=data.get("arguments", {})
+        )
 
 
 @dataclass
@@ -39,6 +47,17 @@ class ToolResult:
             "execution_time_ms": self.execution_time_ms,
             "metadata": self.metadata,
         }
+        
+    @classmethod
+    def from_dict(cls, data: dict) -> 'ToolResult':
+        return cls(
+            tool_call_id=data["tool_call_id"],
+            status=data["status"],
+            result=data.get("result"),
+            error=data.get("error"),
+            execution_time_ms=data.get("execution_time_ms"),
+            metadata=data.get("metadata", {})
+        )
 
 
 @dataclass
@@ -72,6 +91,31 @@ class Message:
             data["tool_results"] = [tr.to_dict() for tr in self.tool_results]
         return data
 
+    @classmethod
+    def from_dict(cls, data: dict) -> 'Message':
+        timestamp_str = data.get("timestamp")
+        timestamp = datetime.fromisoformat(timestamp_str) if timestamp_str else datetime.utcnow()
+        
+        tool_calls = None
+        if "tool_calls" in data:
+            tool_calls = [ToolCall.from_dict(tc) for tc in data["tool_calls"]]
+            
+        tool_results = None
+        if "tool_results" in data:
+            tool_results = [ToolResult.from_dict(tr) for tr in data["tool_results"]]
+            
+        return cls(
+            id=data.get("id", ""),
+            channel_type=data.get("channel_type", "cli"),
+            sender_id=data.get("sender_id", ""),
+            sender_name=data.get("sender_name", ""),
+            content=data.get("content", ""),
+            timestamp=timestamp,
+            metadata=data.get("metadata", {}),
+            tool_calls=tool_calls,
+            tool_results=tool_results
+        )
+
 
 @dataclass
 class AuthorizationRequest:
@@ -104,6 +148,7 @@ class AuthorizationResponse:
     approved: bool
     timestamp: datetime = field(default_factory=datetime.utcnow)
     comment: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> dict:
         return {
@@ -112,4 +157,5 @@ class AuthorizationResponse:
             "approved": self.approved,
             "timestamp": self.timestamp.isoformat(),
             "comment": self.comment,
+            "metadata": self.metadata,
         }
