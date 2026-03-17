@@ -5,7 +5,7 @@ from .base import (
     get_registered_tools, get_tool_by_name
 )
 from .file_tools import (
-    read_file_impl, write_file_impl, append_file_impl,
+    read_file_impl, write_memory_file_impl, write_file_impl, append_file_impl,
     delete_file_impl, list_files_impl, file_exists_impl,
     get_file_size_impl
 )
@@ -30,6 +30,7 @@ __all__ = [
     "ToolMetadata",
     # File tools
     "read_file_impl",
+    "write_memory_file_impl",
     "write_file_impl",
     "append_file_impl",
     "delete_file_impl",

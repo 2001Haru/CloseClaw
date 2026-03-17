@@ -26,7 +26,7 @@ from .channels import CLIChannel, get_telegram_channel, get_feishu_channel
 from .channels.base import BaseChannel
 from .middleware import MiddlewareChain, SafetyGuard, PathSandbox, ZoneBasedPermission
 from .tools.base import get_registered_tools
-from .types import Zone, AgentConfig
+from .types import Zone, AgentConfig, ContextManagementSettings, LLMSettings
 
 logger = logging.getLogger(__name__)
 
@@ -96,12 +96,35 @@ def create_agent(config: CloseCrawlConfig,
         Fully configured AgentCore
     """
     # Create AgentConfig
+    llm_settings = LLMSettings(
+        model=config.llm.model,
+        provider=config.llm.provider,
+        api_key=config.llm.api_key,
+        base_url=config.llm.base_url,
+        temperature=config.llm.temperature,
+        max_tokens=config.llm.max_tokens,
+        timeout_seconds=config.llm.timeout_seconds,
+    )
+    
+    context_mgmt_settings = ContextManagementSettings(
+        max_tokens=config.context_management.max_tokens,
+        warning_threshold=config.context_management.warning_threshold,
+        critical_threshold=config.context_management.critical_threshold,
+        summarize_window=config.context_management.summarize_window,
+        active_window=config.context_management.active_window,
+        chunk_size=config.context_management.chunk_size,
+        retention_days=config.context_management.retention_days,
+    )
+    
     agent_config = AgentConfig(
         model=config.llm.model,
         max_iterations=config.max_iterations,
         timeout_seconds=config.timeout_seconds,
         temperature=config.llm.temperature,
         system_prompt=config.system_prompt,
+        max_context_tokens=config.max_context_tokens,
+        llm=llm_settings,
+        context_management=context_mgmt_settings,
     )
     
     # Auto-create LLM provider from config if not provided

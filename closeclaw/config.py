@@ -73,6 +73,29 @@ class SafetyConfig:
 
 
 @dataclass
+class ContextManagementConfig:
+    """Context and memory management configuration (Phase 4)."""
+    max_tokens: int = 100000
+    warning_threshold: float = 0.75
+    critical_threshold: float = 0.95
+    summarize_window: int = 50
+    active_window: int = 10
+    chunk_size: int = 5000
+    retention_days: int = 90
+    
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_tokens": self.max_tokens,
+            "warning_threshold": self.warning_threshold,
+            "critical_threshold": self.critical_threshold,
+            "summarize_window": self.summarize_window,
+            "active_window": self.active_window,
+            "chunk_size": self.chunk_size,
+            "retention_days": self.retention_days,
+        }
+
+
+@dataclass
 class CloseCrawlConfig:
     """Main CloseClaw configuration."""
     agent_id: str
@@ -83,9 +106,11 @@ class CloseCrawlConfig:
     max_iterations: int = 10
     timeout_seconds: int = 300
     system_prompt: Optional[str] = None
+    max_context_tokens: int = 100000  # Default 100k, governs auto-compaction
     log_level: str = "INFO"
     state_file: str = "state.json"
     interaction_log_file: str = "interaction.md"
+    context_management: ContextManagementConfig = field(default_factory=ContextManagementConfig)
     
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -97,9 +122,11 @@ class CloseCrawlConfig:
             "max_iterations": self.max_iterations,
             "timeout_seconds": self.timeout_seconds,
             "system_prompt": self.system_prompt,
+            "max_context_tokens": self.max_context_tokens,
             "log_level": self.log_level,
             "state_file": self.state_file,
             "interaction_log_file": self.interaction_log_file,
+            "context_management": self.context_management.to_dict(),
         }
 
 
@@ -209,6 +236,18 @@ class ConfigLoader:
             audit_log_path=safety_raw.get("audit_log_path", "audit.log"),
         )
         
+        # Context management config (Phase 4)
+        cm_raw = raw_config.get("context_management", {})
+        context_management = ContextManagementConfig(
+            max_tokens=cm_raw.get("max_tokens", 100000),
+            warning_threshold=cm_raw.get("warning_threshold", 0.75),
+            critical_threshold=cm_raw.get("critical_threshold", 0.95),
+            summarize_window=cm_raw.get("summarize_window", 50),
+            active_window=cm_raw.get("active_window", 10),
+            chunk_size=cm_raw.get("chunk_size", 5000),
+            retention_days=cm_raw.get("retention_days", 90),
+        )
+        
         # Main config
         config = CloseCrawlConfig(
             agent_id=raw_config["agent_id"],
@@ -222,6 +261,7 @@ class ConfigLoader:
             log_level=raw_config.get("log_level", "INFO"),
             state_file=raw_config.get("state_file", "state.json"),
             interaction_log_file=raw_config.get("interaction_log_file", "interaction.md"),
+            context_management=context_management,
         )
         
         return config

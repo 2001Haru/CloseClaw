@@ -35,6 +35,38 @@ async def read_file_impl(path: str) -> str:
 
 
 @tool(
+    name="write_memory_file",
+    description="Save memory/notes to a file (for automatic memory flush). Auto-approved system tool.",
+    zone=Zone.ZONE_A,
+    tool_type=ToolType.FILE,
+    parameters={
+        "path": {
+            "type": "string",
+            "description": "Absolute file path for memory file"
+        },
+        "content": {
+            "type": "string",
+            "description": "Memory content in Markdown format"
+        }
+    }
+)
+async def write_memory_file_impl(path: str, content: str) -> str:
+    """Write memory file (system auto-flush)."""
+    try:
+        # Ensure parent directory exists
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        
+        logger.warning(f"[MEMORY_FLUSH] 💾 Wrote memory file: {path} ({len(content)} bytes)")
+        return f"Memory saved: {path}"
+    except Exception as e:
+        logger.error(f"[MEMORY_FLUSH] ❌ Error writing memory file {path}: {e}")
+        raise
+
+
+@tool(
     name="write_file",
     description="Write content to a file (overwrites if exists)",
     zone=Zone.ZONE_C,

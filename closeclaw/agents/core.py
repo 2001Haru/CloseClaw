@@ -3,15 +3,19 @@
 import asyncio
 import logging
 import os
+import json
 from typing import Any, Optional, Protocol
 from datetime import datetime
 
 from ..types import (
-    Agent, AgentConfig, Session, Tool, Message, 
-    AgentState, Zone, ToolCall, ToolResult
+    Agent, AgentConfig, Session, Tool, Message,
+    AgentState, Zone, ToolCall, ToolResult, ToolType
 )
 from ..middleware import MiddlewareChain
 from ..tools.adaptation import ToolAdaptationLayer
+from ..safety import AuditLogger
+from ..context import ContextManager, MessageCompactor
+from ..memory import MemoryFlushSession, MemoryFlushCoordinator, MemoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +77,55 @@ class AgentCore:
         self.tools: dict[str, Tool] = {}
         self.message_history: list[Message] = []
         self.pending_auth_requests: dict[str, Any] = {}  # auth_id -> request
+        self.pending_flush_before_next_message = False  # Phase 4: Flag to execute flush before processing next user message
         self.middleware_chain: Optional[MiddlewareChain] = None
         self.tool_adaptation_layer = ToolAdaptationLayer()  # Phase 2: Tool routing
+        
+        # Phase 3.5: Transcript Repair防火墙 - 审计日志初始化
+        audit_log_path = os.path.join(workspace_root, "audit.log")
+        self.audit_logger = AuditLogger(log_file=audit_log_path)
+        
+        # Phase 4: Context Management - Token counting and message compaction
+        self.context_manager = ContextManager(
+            max_tokens=config.context_management.max_tokens,
+            warning_threshold=config.context_management.warning_threshold,
+            critical_threshold=config.context_management.critical_threshold,
+            summarize_window=config.context_management.summarize_window,
+            active_window=config.context_management.active_window,
+            model=config.llm.model
+        )
+        
+        self.message_compactor = MessageCompactor(
+            summarize_window=config.context_management.summarize_window,
+            active_window=config.context_management.active_window,
+            chunk_size=config.context_management.chunk_size
+        )
+        
+        # Phase 4 Step 2: Memory Flush Session - Automatic memory preservation
+        self.memory_flush_session = MemoryFlushSession(workspace_root=workspace_root)
+        self.memory_flush_coordinator = MemoryFlushCoordinator(self.memory_flush_session)
+        
+        # Phase 4 Step 3: Memory Manager - SQLite + Vector Search
+        self.memory_manager = MemoryManager(workspace_root=workspace_root)
+        
+        # Register retrieve_memory tool
+        self.register_tool(Tool(
+            name="retrieve_memory",
+            description="Retrieve relevant memories from long-term storage using semantic search and keywords.",
+            handler=self._handle_retrieve_memory,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query to find relevant memories."
+                    }
+                },
+                "required": ["query"]
+            },
+            zone=Zone.ZONE_A,  # Safe read-only tool
+            type=ToolType.FILE  # Treat as file/memory operation
+        ))
         
     def register_tool(self, tool: Tool) -> None:
         """Register a tool with the agent."""
@@ -118,25 +169,164 @@ class AgentCore:
     async def process_message(self, message: Message) -> dict[str, Any]:
         """Process a single user message through the agent loop.
         
+        REDESIGNED Phase 4: Enhanced Memory Flush with Early Token Detection
+        
+        New workflow:
+        1. PRE-FLIGHT TOKEN CHECK: Before adding user message, check if already over threshold
+        2. IF OVER THRESHOLD:
+           - Do NOT add user message to history yet
+           - Create flush phase: send history + system flush prompt to LLM
+           - LLM extracts key information and saves to memory via write_memory_file
+           - Compress history
+           - Return completion status
+           - Store user message for processing in next call
+        3. IF UNDER THRESHOLD:
+           - Add user message and process normally
+        4. AFTER FLUSH (next process_message call):
+           - Add the stored user message
+           - Process normally with compressed history
+        
         Returns: {
             "response": str,
             "tool_calls": list[ToolCall],
             "tool_results": list[ToolResult],
             "requires_auth": bool,
-            "auth_request_id": str (if auth required)
+            "memory_flushed": bool (True if flush was executed)
         }
         """
         if not self.current_session:
             raise RuntimeError("No active session")
         
-        # STATE LOCK: If we were waiting for auth and get a new user message,
-        # interpret it as cancellation of the previous dangerous operation.
-        # This prevents "zombie requests" and allows users to interrupt operations.
+        # STATE LOCK: Clear auth if new message arrives
         if self.state == AgentState.WAITING_FOR_AUTH:
             logger.info(f"Clearing pending auth requests: user sent new message while WAITING_FOR_AUTH")
             self.pending_auth_requests.clear()
             self.state = AgentState.RUNNING
+        
+        # ========================================
+        # PHASE 0: PRE-FLIGHT TOKEN DETECTION
+        # ========================================
+        # Check if we're already over threshold BEFORE adding new message
+        logger.warning("\n" + "="*70)
+        logger.warning("[PHASE 4 REDESIGNED] Pre-flight token check...")
+        
+        temp_messages = []
+        system_message = {
+            "role": "system",
+            "content": self.config.system_prompt or "",
+        }
+        temp_messages.append(system_message)
+        
+        # Add current history (not including new message yet)
+        for msg in self.message_history:
+            role = "user" if msg.sender_id != self.agent_id else "assistant"
+            temp_messages.append({
+                "role": role,
+                "content": msg.content,
+            })
+        
+        # Calculate tokens WITHOUT the new message
+        current_token_count = self.context_manager.count_message_tokens(temp_messages)
+        current_status, _ = self.context_manager.check_thresholds(current_token_count)
+        current_ratio = self.context_manager.get_usage_ratio(current_token_count)
+        
+        logger.warning(f"[PRE-CHECK] Current history tokens: {current_token_count}/{self.context_manager.max_tokens} ({current_ratio*100:.1f}%) [Status: {current_status}]")
+        
+        # Now check if ADDING the new message would exceed threshold
+        temp_messages_with_new = temp_messages.copy()
+        temp_messages_with_new.append({
+            "role": "user",
+            "content": message.content,
+        })
+        
+        new_total_tokens = self.context_manager.count_message_tokens(temp_messages_with_new)
+        new_status, new_needs_flush = self.context_manager.check_thresholds(new_total_tokens)
+        new_ratio = self.context_manager.get_usage_ratio(new_total_tokens)
+        
+        logger.warning(f"[PRE-CHECK] With new message:           {new_total_tokens}/{self.context_manager.max_tokens} ({new_ratio*100:.1f}%) [Status: {new_status}]")
+        
+        # ========================================
+        # PHASE 1: DECIDE - FLUSH OR PROCESS?
+        # ========================================
+        if new_needs_flush or new_ratio >= 0.80:  # Early flush at 80%
+            logger.warning(f"[DECISION] Token threshold ({new_ratio*100:.1f}%) exceeded! Executing FLUSH FIRST with full context")
+            logger.warning("="*70)
             
+            # PHASE 1A: Execute flush with full conversation context
+            # Do NOT add the user message yet - process flush first
+            flush_result = await self._execute_memory_flush_with_context(self.message_history)
+            
+            if flush_result.get("success"):
+                logger.warning(f"[FLUSH COMPLETE] History compressed from {len(self.message_history)} to {len(self.message_history)} messages")
+                logger.warning(f"[CONTINUING] Now processing the user message with fresh history...")
+                logger.warning("="*70 + "\n")
+                
+                # PHASE 2: NOW process the user message with flushed/compressed history
+                self.message_history.append(message)
+                
+                # Now call LLM with the new message
+                messages_for_llm = self._format_conversation_for_llm()
+                tools_for_llm = self._format_tools_for_llm()
+                
+                logger.info("Calling LLM with user message (post-flush)...")
+                try:
+                    llm_response, tool_calls = await self.llm_provider.generate(
+                        messages=messages_for_llm,
+                        tools=tools_for_llm,
+                        temperature=self.config.temperature,
+                    )
+                except Exception as e:
+                    logger.error(f"LLM error: {e}")
+                    self.state = AgentState.ERROR
+                    return {
+                        "response": f"Error calling LLM: {str(e)}",
+                        "tool_calls": [],
+                        "tool_results": [],
+                        "requires_auth": False,
+                        "memory_flushed": True,
+                    }
+                
+                # Process tool calls normally
+                tool_results = []
+                if tool_calls:
+                    logger.info(f"Processing {len(tool_calls)} tool calls...")
+                    for tool_call in tool_calls:
+                        result = await self._process_tool_call(tool_call)
+                        tool_results.append(result)
+                        if result.status == "auth_required":
+                            self.state = AgentState.WAITING_FOR_AUTH
+                            break
+                
+                # Save to history
+                if llm_response:
+                    self.message_history.append(Message(
+                        id=f"msg_{datetime.utcnow().timestamp()}",
+                        channel_type=self.current_session.channel_type if self.current_session else "unknown",
+                        sender_id=self.agent_id,
+                        sender_name="Agent",
+                        content=llm_response,
+                        tool_calls=tool_calls,
+                        tool_results=tool_results,
+                    ))
+                
+                return {
+                    "response": llm_response or "OK",
+                    "tool_calls": [tc.to_dict() for tc in tool_calls] if tool_calls else [],
+                    "tool_results": [tr.to_dict() for tr in tool_results],
+                    "requires_auth": False,
+                    "memory_flushed": True,
+                }
+            else:
+                logger.warning(f"[FLUSH FAILED] {flush_result.get('error', 'Unknown error')}")
+                logger.warning("="*70 + "\n")
+        
+        # ========================================
+        # PHASE 2: NORMAL PROCESSING (No flush needed)
+        # ========================================
+        logger.warning(f"[DECISION] Within threshold. Proceeding with normal message processing")
+        logger.warning("="*70 + "\n")
+        
+        # Standard flow: add message and process
         self.message_history.append(message)
         
         # Format conversation for LLM
@@ -159,6 +349,7 @@ class AgentCore:
                 "tool_calls": [],
                 "tool_results": [],
                 "requires_auth": False,
+                "memory_flushed": False,
             }
         
         # Process tool calls if any
@@ -195,11 +386,10 @@ class AgentCore:
                 "requires_auth": True,
                 "auth_request_id": pending_auth.get("auth_request_id"),
                 "pending_auth": pending_auth,
+                "memory_flushed": False,
             }
         
-        # PERSISTENCE: Save assistant's tool calls and results to history
-        # so the LLM has memory of its actions on the next turn.
-        # Only do this if tools were actually called and finished (no auth block).
+        # Save assistant response to history
         if tool_calls and tool_results:
             self.message_history.append(Message(
                 id=f"msg_{datetime.utcnow().timestamp()}",
@@ -210,32 +400,7 @@ class AgentCore:
                 tool_calls=tool_calls,
                 tool_results=tool_results,
             ))
-            
-            # Since tools were executed, we should ideally ask the LLM to generate
-            # a final text response describing the results. We can do a second LLM pass:
-            messages_for_llm_post = self._format_conversation_for_llm()
-            try:
-                logger.info("Calling LLM for post-tool text response...")
-                final_response, _ = await self.llm_provider.generate(
-                    messages=messages_for_llm_post,
-                    tools=[],  # No tools on second pass to force text response
-                    temperature=self.config.temperature,
-                )
-                if final_response:
-                    llm_response = final_response
-                    
-                    # Also append this final text response to history
-                    self.message_history.append(Message(
-                        id=f"msg_{datetime.utcnow().timestamp()}_final",
-                        channel_type=self.current_session.channel_type if self.current_session else "unknown",
-                        sender_id=self.agent_id,
-                        sender_name="Agent",
-                        content=final_response,
-                    ))
-            except Exception as e:
-                logger.error(f"Post-tool LLM call failed: {e}")
         elif llm_response:
-            # Just normal text response, append it
             self.message_history.append(Message(
                 id=f"msg_{datetime.utcnow().timestamp()}",
                 channel_type=self.current_session.channel_type if self.current_session else "unknown",
@@ -249,6 +414,7 @@ class AgentCore:
             "tool_calls": [tc.to_dict() for tc in tool_calls] if tool_calls else [],
             "tool_results": [tr.to_dict() for tr in tool_results],
             "requires_auth": False,
+            "memory_flushed": False,
         }
     
     async def _process_tool_call(self, tool_call: ToolCall) -> ToolResult:
@@ -425,17 +591,28 @@ class AgentCore:
             }
     
     def _format_conversation_for_llm(self) -> list[dict[str, Any]]:
-        """Format conversation history for LLM input."""
+        """Format conversation history for LLM input with context management.
+        
+        Phase 4 Enhancement:
+        - Count tokens in the formatted conversation
+        - Apply message compression if approaching token limit
+        - Log context usage metrics
+        - Display token usage information for user awareness
+        """
         import json
         logger.info(f"[DEBUG] _format_conversation_for_llm: processing {len(self.message_history)} raw messages from history")
         messages = []
         
-        # Add system prompt
-        if self.config.system_prompt:
-            messages.append({
-                "role": "system",
-                "content": self.config.system_prompt,
-            })
+        # Add system prompt with token usage information
+        system_content = self.config.system_prompt or ""
+        
+        # Build the enhanced system prompt with token usage display
+        # This will be updated after we count tokens, so we'll add a placeholder
+        system_message = {
+            "role": "system",
+            "content": system_content,
+        }
+        messages.append(system_message)
         
         # Add message history
         for msg in self.message_history:
@@ -481,11 +658,415 @@ class AgentCore:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tr.tool_call_id,
-                        "content": content,
+                        "content": content
                     })
         
-        return messages
+        # Phase 4: Token counting and context management
+        token_count = self.context_manager.count_message_tokens(messages)
+        status, needs_flush = self.context_manager.check_thresholds(token_count)
+        
+        context_report = self.context_manager.get_status_report(token_count)
+        logger.info(f"[CONTEXT] Token usage: {context_report['usage_percentage']} ({token_count}/{self.context_manager.max_tokens}), Status: {status}")
+        
+        # Enhance system prompt with token usage information
+        token_usage_info = f"\n\n[CONTEXT MONITOR] Current token usage: {token_count}/{self.context_manager.max_tokens} ({context_report['usage_percentage']})"
+        system_message["content"] = system_content + token_usage_info
+        
+        # Phase 4 Step 2: Memory Flush - Detect flush need and mark for separate execution
+        usage_ratio = self.context_manager.get_usage_ratio(token_count)
+        if self.memory_flush_coordinator.mark_flush_pending(status, usage_ratio):
+            logger.warning(f"[MEMORY_FLUSH] 🚨 Flush needed at {context_report['usage_percentage']} - will execute before next message")
+            # DO NOT inject flush prompt here. Instead, mark it for separate execution.
+            # This allows Agent to finish current task without distraction.
+            self.pending_flush_before_next_message = True
+        
+        # If approaching critical threshold, apply message compaction
+        if needs_flush == "CRITICAL" or status == "CRITICAL":
+            force_truncate = True
+            
+            compressed_messages, action = self.message_compactor.apply_compression_strategy(
+                messages,
+                token_count,
+                usage_ratio,
+                force=force_truncate
+            )
+            
+            if action != "none":
+                logger.warning(f"[CONTEXT_COMPACTION] Applied '{action}' compression. Original: {len(messages)} messages")
+                messages = compressed_messages
+                # Re-count tokens after compression
+                token_count = self.context_manager.count_message_tokens(messages)
+                status, needs_flush = self.context_manager.check_thresholds(token_count)
+                context_report = self.context_manager.get_status_report(token_count)
+                logger.info(f"[CONTEXT] After compression: {token_count}/{self.context_manager.max_tokens} tokens ({context_report['usage_percentage']})")
+                
+                # Update system prompt with new token count
+                token_usage_info = f"\n\n[CONTEXT MONITOR] Current token usage: {token_count}/{self.context_manager.max_tokens} ({context_report['usage_percentage']})"
+                messages[0]["content"] = (self.config.system_prompt or "") + token_usage_info
+                
+                # CRITICAL FIX: Also trim message_history to prevent re-accumulation
+                # Calculate how many message objects (from original message_history) to keep
+                # Use aggressive trimming: active_window * 2 (not * 3) to ensure new messages won't exceed limit
+                # Each conversation round typically = user msg + assistant msg
+                target_history_size = max(self.message_compactor.active_window * 2, 5)  # At least keep 5 messages
+                if len(self.message_history) > target_history_size:
+                    old_size = len(self.message_history)
+                    self.message_history = self.message_history[-target_history_size:]
+                    logger.warning(f"[MEMORY_COMPACTION] Aggressively trimmed message_history from {old_size} → {len(self.message_history)} (target={target_history_size}) to prevent re-accumulation on next message")
+        
+        # Apply surgical repair to the transcript before returning
+        repaired_messages = self._repair_transcript(messages)
+        
+        # Log final context report
+        if status != "OK":
+            logger.warning(f"[CONTEXT_WARNING] Status={status}, needs_flush={needs_flush}")
+            try:
+                self.audit_logger.log(
+                    event_type="context_threshold_warning",
+                    status=status,
+                    user_id=self.current_session.user_id if self.current_session else "system",
+                    tool_name="[system.context_manager]",
+                    arguments=context_report,
+                    result=f"Token count {token_count} exceeded {status.lower()} threshold"
+                )
+            except Exception as e:
+                logger.error(f"Failed to log context warning: {e}")
+        
+        return repaired_messages
     
+    async def _execute_memory_flush_with_context(self, history_messages: list[Message]) -> dict:
+        """Execute memory flush with FULL conversation context so agent can extract key info.
+        
+        IMPROVED APPROACH:
+        - Agent sees the entire conversation history
+        - Agent can identify and extract key information
+        - Agent writes important information to memory via write_memory_file
+        - Then we compress the history for next round
+        
+        Args:
+            history_messages: Current message history to flush
+            
+        Returns:
+            {"success": bool, "error": str, "files_saved": int}
+        """
+        logger.warning("[MEMORY_FLUSH] 🧠 Executing flush WITH FULL CONTEXT")
+        logger.warning(f"[MEMORY_FLUSH]    Conversation has {len(history_messages)} messages to analyze")
+        
+        if not history_messages:
+            logger.warning("[MEMORY_FLUSH] No history to flush")
+            return {"success": True, "error": None, "files_saved": 0}
+        
+        # Build full message list WITH history (so agent sees what to extract from)
+        messages = []
+        
+        # System message
+        system_message = {
+            "role": "system",
+            "content": "You are an AI assistant preserving important conversation memory for future reference.",
+        }
+        messages.append(system_message)
+        
+        # Add complete history
+        for msg in history_messages:
+            role = "user" if msg.sender_id != self.agent_id else "assistant"
+            messages.append({
+                "role": role,
+                "content": msg.content,
+            })
+        
+        # Add flush instruction as FINAL USER message with complete context
+        flush_instruction = self.memory_flush_session.create_flush_system_prompt()
+        messages.append({
+            "role": "user",  # User role to avoid duplicate system roles
+            "content": flush_instruction,
+        })
+        
+        logger.warning(f"[MEMORY_FLUSH]    Sending {len(messages)} messages to LLM (with full history)")
+        logger.warning(f"[MEMORY_FLUSH]    LLM can now see: main conversation + flush instruction")
+        
+        # Get tools for LLM
+        tools_for_llm = self._format_tools_for_llm()
+        
+        # Call LLM
+        try:
+            llm_response, tool_calls = await self.llm_provider.generate(
+                messages=messages,
+                tools=tools_for_llm,
+                temperature=0.3,  # Higher than 0 to encourage tool calling
+            )
+            
+            logger.warning(f"[MEMORY_FLUSH] 📨 LLM Response: {llm_response[:100] if llm_response else '(empty)'}...")
+            
+            if not tool_calls:
+                logger.warning(f"[MEMORY_FLUSH] ⚠️  No tool calls. Agent saw context but didn't extract memory")
+                logger.warning(f"[MEMORY_FLUSH]    Response: {llm_response}")
+                
+                # Still mark success since context was available
+                return {
+                    "success": True,
+                    "error": "Agent did not call write_memory_file",
+                    "files_saved": 0
+                }
+            
+            # Process tool calls
+            logger.warning(f"[MEMORY_FLUSH] 🔧 Processing {len(tool_calls)} tool calls...")
+            files_saved = 0
+            
+            for tool_call in tool_calls:
+                if tool_call.name == "write_memory_file":
+                    result = await self._process_tool_call(tool_call)
+                    if result.status == "success":
+                        files_saved += 1
+                        logger.warning(f"[MEMORY_FLUSH] ✅ Memory file saved via tool call")
+                        
+                        # Phase 4 Step 3: Also save to SQLite MemoryManager
+                        try:
+                            # Extract content from arguments
+                            content = tool_call.arguments.get("content", "")
+                            filename = tool_call.arguments.get("filename", "unknown.md")
+                            
+                            if content:
+                                self.memory_manager.add_memory(
+                                    content=content,
+                                    source=f"file:{filename}",
+                                    session_id=self.current_session.session_id if self.current_session else "unknown",
+                                    metadata={"filename": filename, "flush_type": "context_aware"}
+                                )
+                                logger.warning(f"[MEMORY_FLUSH] 🧠 Also indexed to SQLite MemoryManager")
+                        except Exception as e:
+                            logger.error(f"[MEMORY_FLUSH] Failed to index memory to SQLite: {e}")
+                            
+                    else:
+                        logger.warning(f"[MEMORY_FLUSH] ⚠️  Tool call failed: {result.error}")
+            
+            logger.warning(f"[MEMORY_FLUSH] 💾 Total files saved: {files_saved}")
+            
+            # Now compress the history
+            if history_messages:
+                logger.warning(f"[MEMORY_FLUSH] 📦 Compressing history from {len(self.message_history)} messages...")
+                self.message_history = self.message_history[-5:] if len(self.message_history) > 5 else self.message_history
+                logger.warning(f"[MEMORY_FLUSH]    Compressed to {len(self.message_history)} messages")
+            
+            return {
+                "success": True,
+                "error": None,
+                "files_saved": files_saved
+            }
+            
+        except Exception as e:
+            logger.error(f"[MEMORY_FLUSH] ❌ Flush failed: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                "success": False,
+                "error": str(e),
+                "files_saved": 0
+            }
+    
+    async def _execute_memory_flush_standalone(self) -> None:
+        """Execute memory flush as a standalone LLM call (only flush, no other task).
+        
+        Phase 4: This is called BEFORE processing a user message that would trigger flush.
+        The LLM gets a single system message: the flush prompt, and its only task is to
+        call write_memory_file tool and return [SILENT_REPLY].
+        """
+        logger.warning("[MEMORY_FLUSH] 🚀 Starting standalone flush execution...")
+        
+        # Create a minimal message list with ONLY the flush prompt
+        # CRITICAL: Use "user" role for flush prompt to avoid consecutive "system" roles
+        # which cause LLM API 400 errors (format issue with some providers)
+        flush_only_messages = [
+            {
+                "role": "system",
+                "content": "You are an AI assistant helping preserve conversation memory."
+            },
+            {
+                "role": "user",  # Changed from "system" to "user" to avoid format error
+                "content": self.memory_flush_session.create_flush_system_prompt(),
+            }
+        ]
+        
+        tools_for_llm = self._format_tools_for_llm()
+        
+        # Call LLM with ONLY flush prompt
+        logger.warning("[MEMORY_FLUSH] 📞 Calling LLM with flush-only prompt...")
+        try:
+            llm_response, tool_calls = await self.llm_provider.generate(
+                messages=flush_only_messages,
+                tools=tools_for_llm,
+                temperature=self.config.temperature,
+            )
+        except Exception as e:
+            logger.error(f"[MEMORY_FLUSH] LLM flush call failed: {e}")
+            return
+        
+        logger.warning(f"[MEMORY_FLUSH] 📨 LLM Response: {llm_response[:100] if llm_response else '(empty)'}...")
+        
+        # Check for [SILENT_REPLY] marker
+        has_flush_marker = self.memory_flush_session.check_for_silent_reply(llm_response)
+        if not has_flush_marker:
+            logger.warning(f"[MEMORY_FLUSH] ⚠️  [SILENT_REPLY] marker NOT found in response!")
+            logger.warning(f"[MEMORY_FLUSH]    Response: {llm_response[:200] if llm_response else '(empty)'}...")
+        else:
+            logger.warning(f"[MEMORY_FLUSH] ✅ [SILENT_REPLY] marker detected")
+        
+        # Process tool calls (write_memory_file)
+        flush_tool_calls = tool_calls if tool_calls else []
+        if flush_tool_calls:
+            logger.warning(f"[MEMORY_FLUSH] 🔧 Processing {len(flush_tool_calls)} tool call(s):")
+            for i, tool_call in enumerate(flush_tool_calls, 1):
+                logger.warning(f"[MEMORY_FLUSH]    ({i}/{len(flush_tool_calls)}) {tool_call.name}...")
+                try:
+                    result = await self._process_tool_call(tool_call)
+                    if result.status == "success":
+                        logger.warning(f"[MEMORY_FLUSH]        ✅ SUCCESS")
+                        
+                        # Phase 4 Step 3: Also save to SQLite MemoryManager
+                        try:
+                            # Extract content from arguments
+                            content = tool_call.arguments.get("content", "")
+                            filename = tool_call.arguments.get("filename", "unknown.md")
+                            
+                            if content:
+                                self.memory_manager.add_memory(
+                                    content=content,
+                                    source=f"file:{filename}",
+                                    session_id=self.current_session.session_id if self.current_session else "unknown",
+                                    metadata={"filename": filename, "flush_type": "standalone"}
+                                )
+                                logger.warning(f"[MEMORY_FLUSH]        🧠 Also indexed to SQLite MemoryManager")
+                        except Exception as e:
+                            logger.error(f"[MEMORY_FLUSH]        ❌ Failed to index memory to SQLite: {e}")
+
+                    else:
+                        logger.warning(f"[MEMORY_FLUSH]        ⚠️  {result.status}")
+                        if result.error:
+                            logger.warning(f"[MEMORY_FLUSH]        Error: {result.error}")
+                except Exception as e:
+                    logger.error(f"[MEMORY_FLUSH]        ❌ {e}")
+        else:
+            logger.warning(f"[MEMORY_FLUSH] ⚠️  NO TOOL CALLS in flush response")
+            logger.warning(f"[MEMORY_FLUSH]    This means memory files were NOT saved!")
+        
+        # Wait for files to be written
+        import time
+        time.sleep(0.2)
+        
+        # Collect saved files
+        saved_files = self.memory_flush_session.collect_saved_memories()
+        logger.warning(f"[MEMORY_FLUSH] 📁 Collected {len(saved_files)} memory file(s)")
+        
+        # Record flush event
+        session_id = self.memory_flush_coordinator.last_flush_session_id
+        current_usage_ratio = self.context_manager.get_usage_ratio(
+            self.context_manager.token_count
+        )
+        self.memory_flush_session.record_flush_event(
+            user_id=self.current_session.user_id if self.current_session else "system",
+            session_id=session_id,
+            saved_files=saved_files,
+            context_ratio=current_usage_ratio,
+            audit_logger=self.audit_logger
+        )
+        
+        # Clear history and pending flag
+        logger.warning(f"[MEMORY_FLUSH] 🗑️  Compressing history from {len(self.message_history)} messages...")
+        self.message_history = self.message_history[-5:] if len(self.message_history) > 5 else self.message_history
+        logger.warning(f"[MEMORY_FLUSH]    Compressed to {len(self.message_history)} messages")
+        self.memory_flush_coordinator.clear_pending_flush()
+        
+        logger.warning(f"[MEMORY_FLUSH] ✅ Flush complete - {len(saved_files)} files saved")
+        
+    def _repair_transcript(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """
+        Repair LLM transcript to satisfy strict API constraints.
+        Ensures every tool_call in an assistant message has a corresponding tool result message,
+        and no tool results exist without a parent tool call.
+        
+        Phase 3.5 Enhancement: Collect repair statistics and log to audit.log
+        """
+        repaired = []
+        pending_tool_calls = {}  # tool_call_id -> function name
+        
+        # Phase 3.5: 修复统计
+        stats = {
+            "orphan_calls_removed": 0,
+            "orphan_results_dropped": 0,
+            "synthetic_results_added": 0,
+            "calls_seen": [],  # 记录所有 tool_call_id
+        }
+        
+        for msg in messages:
+            role = msg.get("role")
+            
+            # If we transition to a non-tool message, check if we have unresolved tool calls
+            if role in ["user", "assistant", "system"] and pending_tool_calls:
+                # We have orphaned tool calls! Inject synthetic errors.
+                for tc_id, func_name in pending_tool_calls.items():
+                    repaired.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": "[System Repair] Tool execution interrupted or cancelled before completion. Synthetic error injected to repair transcript."
+                    })
+                    stats["synthetic_results_added"] += 1
+                    stats["orphan_calls_removed"] += 1
+                pending_tool_calls.clear()
+            
+            if role == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    tc_id = tc["id"]
+                    pending_tool_calls[tc_id] = tc["function"]["name"]
+                    stats["calls_seen"].append(tc_id)
+            
+            if role == "tool":
+                tc_id = msg.get("tool_call_id")
+                if tc_id in pending_tool_calls:
+                    del pending_tool_calls[tc_id]
+                else:
+                    # Orphan tool result without a parent. Drop it to prevent strict API crashes.
+                    stats["orphan_results_dropped"] += 1
+                    continue
+            
+            repaired.append(msg)
+            
+        # At the end of the transcript, tie up any remaining loose ends
+        if pending_tool_calls:
+            for tc_id, func_name in pending_tool_calls.items():
+                repaired.append({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": "[System Repair] Tool execution interrupted before completion. Synthetic error injected."
+                })
+                stats["synthetic_results_added"] += 1
+                stats["orphan_calls_removed"] += 1
+            pending_tool_calls.clear()
+        
+        # Phase 3.5: 记录修复统计至审计日志
+        if stats["orphan_calls_removed"] > 0 or stats["orphan_results_dropped"] > 0:
+            logger.info(
+                f"[TRANSCRIPT_REPAIR] orphan_calls_removed={stats['orphan_calls_removed']} "
+                f"orphan_results_dropped={stats['orphan_results_dropped']} "
+                f"synthetic_results_added={stats['synthetic_results_added']}"
+            )
+            # 记录到审计日志
+            try:
+                self.audit_logger.log(
+                    event_type="transcript_repair",
+                    status="success",
+                    user_id=self.current_session.user_id if self.current_session else "system",
+                    tool_name="[system.transcript_repair]",
+                    arguments={
+                        "orphan_calls_removed": stats["orphan_calls_removed"],
+                        "orphan_results_dropped": stats["orphan_results_dropped"],
+                        "synthetic_results_added": stats["synthetic_results_added"],
+                    },
+                    result=f"Repaired transcript: {len(repaired)} messages"
+                )
+            except Exception as e:
+                logger.error(f"Failed to log transcript repair: {e}")
+            
+        return repaired
+
     def _format_tools_for_llm(self) -> list[dict[str, Any]]:
         """Format registered tools for LLM function calling.
         
@@ -533,6 +1114,30 @@ class AgentCore:
                 },
             })
         return tools_list
+
+    async def _handle_retrieve_memory(self, query: str) -> str:
+        """Handle retrieve_memory tool call."""
+        logger.info(f"Retrieving memories for query: {query}")
+        
+        try:
+            memories = self.memory_manager.retrieve_memories(
+                query=query,
+                top_k=5,
+                session_id=self.current_session.session_id if self.current_session else None
+            )
+            
+            if not memories:
+                return "No relevant memories found."
+            
+            result = "Found relevant memories:\n\n"
+            for i, mem in enumerate(memories, 1):
+                result += f"{i}. [Score: {mem.score:.2f}] (Source: {mem.source})\n"
+                result += f"{mem.content[:500]}...\n\n"
+                
+            return result
+        except Exception as e:
+            logger.error(f"Error retrieving memories: {e}")
+            return f"Error retrieving memories: {str(e)}"
     
     def pause(self) -> None:
         """Pause agent execution."""

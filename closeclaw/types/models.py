@@ -94,6 +94,52 @@ class Session:
 
 
 @dataclass
+class ContextManagementSettings:
+    """Context management settings (Phase 4)."""
+    max_tokens: int = 100000
+    warning_threshold: float = 0.75
+    critical_threshold: float = 0.95
+    summarize_window: int = 50
+    active_window: int = 10
+    chunk_size: int = 5000
+    retention_days: int = 90
+    
+    def to_dict(self) -> dict:
+        return {
+            "max_tokens": self.max_tokens,
+            "warning_threshold": self.warning_threshold,
+            "critical_threshold": self.critical_threshold,
+            "summarize_window": self.summarize_window,
+            "active_window": self.active_window,
+            "chunk_size": self.chunk_size,
+            "retention_days": self.retention_days,
+        }
+
+
+@dataclass
+class LLMSettings:
+    """LLM provider settings."""
+    model: str
+    provider: str = "openai"
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    temperature: float = 0.0
+    max_tokens: int = 2000
+    timeout_seconds: int = 60
+    
+    def to_dict(self) -> dict:
+        return {
+            "model": self.model,
+            "provider": self.provider,
+            "api_key": self.api_key,
+            "base_url": self.base_url,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+            "timeout_seconds": self.timeout_seconds,
+        }
+
+
+@dataclass
 class AgentConfig:
     """Agent configuration."""
     model: str  # e.g. "openai/gpt-4", "anthropic/claude-3"
@@ -101,6 +147,12 @@ class AgentConfig:
     timeout_seconds: int = 300
     temperature: float = 0.0
     system_prompt: Optional[str] = None
+    max_context_tokens: int = 100000  # Default safe limit for compaction
+    
+    # Phase 4: Context Management and LLM settings
+    context_management: ContextManagementSettings = field(default_factory=ContextManagementSettings)
+    llm: LLMSettings = field(default_factory=lambda: LLMSettings(model="gpt-4"))
+    
     metadata: dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> dict:
@@ -110,6 +162,9 @@ class AgentConfig:
             "timeout_seconds": self.timeout_seconds,
             "temperature": self.temperature,
             "system_prompt": self.system_prompt,
+            "max_context_tokens": self.max_context_tokens,
+            "context_management": self.context_management.to_dict(),
+            "llm": self.llm.to_dict(),
             "metadata": self.metadata,
         }
 
