@@ -28,36 +28,25 @@ class MemoryFlushSession:
     
     def _generate_memory_flush_prompt(self) -> str:
         """Generate flush prompt with automatic execution requirement."""
-        return f"""[!!! CRITICAL SYSTEM COMMAND !!!]
-⚠️  MEMORY FLUSH REQUIRED - EXECUTE IMMEDIATELY
+        return f"""[!!! CRITICAL ACTIVITY: CONTEXT COMPRESSION !!!]
 
-Your context window is running out of space. You MUST flush your memory to preserve critical information.
+Your context window is almost full and will be compressed momentarily. You MUST flush key memories to persistent storage so they aren't lost.
 
-🔴 THIS IS NOT OPTIONAL - THIS IS A SYSTEM REQUIREMENT
+🔴 CRITICAL PROCEDURE: READ BEFORE WRITE
 
-📋 EXACT STEPS (Do these NOW - do not skip):
+You must NOT blindly write new memory files if similar topics already exist.
 
-1. IDENTIFY: What are the 3-5 most critical things from our conversation?
-   - Key decisions or conclusions
-   - Important configurations or settings
-   - Code snippets or technical solutions
-   - User requests or goals
+📋 REQUIRED STEPS:
 
-2. SAVE EACH ITEM: Use write_memory_file tool for each item
-   - File path: {self.memory_dir}/memory_TOPIC.md (e.g., memory_config.md)
-   - Use Markdown format with ## headers
-   - Include detailed bullet points
-
-3. CALL WRITE_MEMORY_FILE: This is an AUTO-APPROVED tool (no auth needed)
-   Example: write_memory_file("{self.memory_dir}/memory_decision.md", "## Key Decision\\n- Item 1\\n- Item 2")
-
-4. CRITICAL: When ALL items are saved, respond with EXACTLY:
+1. IDENTIFY: Determine the 1-3 core subjects discussed.
+2. SEARCH: Call `search_memory` for each subject to see if we already have memories about this.
+3. CONSOLIDATE/WRITE:
+   - If memories exist: Call `read_memory` to see their exact content, then use `write_memory_file` to update/overwrite them with combined information.
+   - If NO memories exist: Use `write_memory_file` to create new files (e.g., `{self.memory_dir}/memory_config.md`).
+4. CONFIRM: ONLY when you have fully completed all searches, readings, and writings, you must reply with EXACTLY:
    [SILENT_REPLY]
 
-⏰ TIMING: Do this RIGHT NOW. Do not pause or delay.
-💾 TOOL: write_memory_file is available and auto-approved - use it immediately.
-🚫 WARNING: If you don't do this now, context will be lost forever.
-
+Note: You can use tools multiple times. Keep going until all critical information is safely stored.
 [END CRITICAL COMMAND]"""
 
     def __init__(self, workspace_root: str, memory_subdir: str = "memory"):

@@ -134,20 +134,25 @@ class PathSandbox(Middleware):
             logger.warning(f"Cross-drive path attempt blocked: {abs_path}")
             return {
                 "status": "block",
-                "reason": f"Path is on different drive",
+                "reason": f"Path is on different drive or outside workspace: {abs_path}",
             }
         
         return {"status": "allow"}
 
 
 class ZoneBasedPermission(Middleware):
-    """Third middleware: Zone-based permission system."""
+    """Third middleware: Zone-based permission system.
     
-    def __init__(self, require_auth_for_zones: list[Zone] = None):
+    Backwards compatibility:
+    - Accepts legacy admin_user_id kwarg (ignored) to avoid breaking tests using the older signature.
+    """
+    
+    def __init__(self, require_auth_for_zones: list[Zone] = None, admin_user_id: Optional[str] = None):
         """Initialize zone-based permissions.
         
         Args:
             require_auth_for_zones: Zones requiring auth (default: [Zone.ZONE_C])
+            admin_user_id: Legacy compatibility parameter (ignored)
         """
         self.require_auth_for_zones = require_auth_for_zones or [Zone.ZONE_C]
     
@@ -165,11 +170,22 @@ class ZoneBasedPermission(Middleware):
             if tool.type == ToolType.FILE and arguments.get("operation") in ["write", "delete"]:
                 diff_preview = self._generate_diff_preview(tool, arguments)
             
+            auth_id = f"auth_{datetime.utcnow().timestamp()}"
+            auth_request = {
+                "id": auth_id,
+                "tool_name": tool.name,
+                "user_id": session.user_id if session else user_id,
+                "description": f"{tool.name}: {tool.description}",
+                "arguments": arguments,
+                "operation_type": arguments.get("operation", "unknown"),
+                "diff_preview": diff_preview,
+            }
             return {
                 "status": "requires_auth",
+                "auth_request_id": auth_id,
+                "auth_request": auth_request,
                 "tool_name": tool.name,
                 "arguments": arguments,
-                "auth_request_id": f"auth_{datetime.utcnow().timestamp()}",
                 "operation_type": arguments.get("operation", "unknown"),
                 "description": f"{tool.name}: {tool.description}",
                 "diff_preview": diff_preview,
@@ -269,6 +285,16 @@ class MiddlewareChain:
                 return result
         
         return {"status": "allow"}
+    
+    # Backwards-compatible alias expected by older tests and integrations
+    async def execute(self,
+                      tool: Tool,
+                      arguments: dict[str, Any],
+                      session: Optional[Session] = None,
+                      user_id: Optional[str] = None,
+                      **kwargs: Any) -> dict[str, Any]:
+        """Legacy method name mapping to check_permission for compatibility."""
+        return await self.check_permission(tool=tool, arguments=arguments, session=session, user_id=user_id, **kwargs)
 
 
 __all__ = [

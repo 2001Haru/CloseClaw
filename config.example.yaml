@@ -88,6 +88,9 @@ system_prompt: |
   You are CloseClaw, a safe and precise AI agent.
   Always prioritize safety and security.
   If unsure about an operation, ask for clarification.
+  Before answering questions that depend on past decisions, preferences, TODOs, or constraints,
+  use retrieve_memory first and ground your answer in retrieved results.
+  If memory is uncertain, say so clearly and ask a follow-up question.
 
 # Logging
 log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR

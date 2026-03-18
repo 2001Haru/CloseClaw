@@ -47,6 +47,8 @@ class AgentCore:
     
     Code target: < 500 lines
     """
+
+    PREEMPTIVE_FLUSH_MARGIN = 0.05
     
     def __init__(self,
                  agent_id: str,
@@ -77,7 +79,6 @@ class AgentCore:
         self.tools: dict[str, Tool] = {}
         self.message_history: list[Message] = []
         self.pending_auth_requests: dict[str, Any] = {}  # auth_id -> request
-        self.pending_flush_before_next_message = False  # Phase 4: Flag to execute flush before processing next user message
         self.middleware_chain: Optional[MiddlewareChain] = None
         self.tool_adaptation_layer = ToolAdaptationLayer()  # Phase 2: Tool routing
         
@@ -86,14 +87,39 @@ class AgentCore:
         self.audit_logger = AuditLogger(log_file=audit_log_path)
         
         # Phase 4: Context Management - Token counting and message compaction
+        # Support legacy/simple config objects that may not have context_management / llm attrs
+        cm = getattr(config, "context_management", None)
+        if cm is None:
+            # Build default using values on config or hard-coded defaults
+            from ..types.models import ContextManagementSettings
+            cm = ContextManagementSettings(
+                max_tokens=getattr(config, "max_context_tokens", 100000),
+                warning_threshold=getattr(config, "warning_threshold", 0.75),
+                critical_threshold=getattr(config, "critical_threshold", 0.95),
+                summarize_window=getattr(config, "summarize_window", 50),
+                active_window=getattr(config, "active_window", 10),
+                chunk_size=getattr(config, "chunk_size", 5000),
+            )
+        llm_settings = getattr(config, "llm", None)
+        if llm_settings is None:
+            # Fallback to any simple model attribute or default
+            class _LLMShim:
+                model = getattr(config, "model", "gpt-4")
+            llm_settings = _LLMShim()
+    
         self.context_manager = ContextManager(
-            max_tokens=config.context_management.max_tokens,
-            warning_threshold=config.context_management.warning_threshold,
-            critical_threshold=config.context_management.critical_threshold,
-            summarize_window=config.context_management.summarize_window,
-            active_window=config.context_management.active_window,
-            model=config.llm.model
+            max_tokens=cm.max_tokens,
+            warning_threshold=cm.warning_threshold,
+            critical_threshold=cm.critical_threshold,
+            summarize_window=cm.summarize_window,
+            active_window=cm.active_window,
+            model=llm_settings.model
         )
+
+        # Trigger flush slightly before warning threshold to reduce hard-overflow retries.
+        warning_threshold = getattr(cm, "warning_threshold", 0.75)
+        preemptive_ratio = warning_threshold + self.PREEMPTIVE_FLUSH_MARGIN
+        self.preemptive_flush_ratio = max(0.0, min(1.0, preemptive_ratio))
         
         self.message_compactor = MessageCompactor(
             summarize_window=config.context_management.summarize_window,
@@ -213,7 +239,7 @@ class AgentCore:
         temp_messages = []
         system_message = {
             "role": "system",
-            "content": self.config.system_prompt or "",
+            "content": self._build_system_prompt(),
         }
         temp_messages.append(system_message)
         
@@ -240,7 +266,7 @@ class AgentCore:
         })
         
         new_total_tokens = self.context_manager.count_message_tokens(temp_messages_with_new)
-        new_status, new_needs_flush = self.context_manager.check_thresholds(new_total_tokens)
+        new_status, should_preflush = self.context_manager.check_thresholds(new_total_tokens)
         new_ratio = self.context_manager.get_usage_ratio(new_total_tokens)
         
         logger.warning(f"[PRE-CHECK] With new message:           {new_total_tokens}/{self.context_manager.max_tokens} ({new_ratio*100:.1f}%) [Status: {new_status}]")
@@ -248,7 +274,7 @@ class AgentCore:
         # ========================================
         # PHASE 1: DECIDE - FLUSH OR PROCESS?
         # ========================================
-        if new_needs_flush or new_ratio >= 0.80:  # Early flush at 80%
+        if should_preflush or new_ratio >= self.preemptive_flush_ratio:
             logger.warning(f"[DECISION] Token threshold ({new_ratio*100:.1f}%) exceeded! Executing FLUSH FIRST with full context")
             logger.warning("="*70)
             
@@ -604,7 +630,7 @@ class AgentCore:
         messages = []
         
         # Add system prompt with token usage information
-        system_content = self.config.system_prompt or ""
+        system_content = self._build_system_prompt()
         
         # Build the enhanced system prompt with token usage display
         # This will be updated after we count tokens, so we'll add a placeholder
@@ -663,7 +689,7 @@ class AgentCore:
         
         # Phase 4: Token counting and context management
         token_count = self.context_manager.count_message_tokens(messages)
-        status, needs_flush = self.context_manager.check_thresholds(token_count)
+        status, should_flush = self.context_manager.check_thresholds(token_count)
         
         context_report = self.context_manager.get_status_report(token_count)
         logger.info(f"[CONTEXT] Token usage: {context_report['usage_percentage']} ({token_count}/{self.context_manager.max_tokens}), Status: {status}")
@@ -676,12 +702,11 @@ class AgentCore:
         usage_ratio = self.context_manager.get_usage_ratio(token_count)
         if self.memory_flush_coordinator.mark_flush_pending(status, usage_ratio):
             logger.warning(f"[MEMORY_FLUSH] 🚨 Flush needed at {context_report['usage_percentage']} - will execute before next message")
-            # DO NOT inject flush prompt here. Instead, mark it for separate execution.
+            # DO NOT inject flush prompt here. Coordinator tracks pending state.
             # This allows Agent to finish current task without distraction.
-            self.pending_flush_before_next_message = True
         
         # If approaching critical threshold, apply message compaction
-        if needs_flush == "CRITICAL" or status == "CRITICAL":
+        if status == "CRITICAL":
             force_truncate = True
             
             compressed_messages, action = self.message_compactor.apply_compression_strategy(
@@ -702,7 +727,7 @@ class AgentCore:
                 
                 # Update system prompt with new token count
                 token_usage_info = f"\n\n[CONTEXT MONITOR] Current token usage: {token_count}/{self.context_manager.max_tokens} ({context_report['usage_percentage']})"
-                messages[0]["content"] = (self.config.system_prompt or "") + token_usage_info
+                messages[0]["content"] = self._build_system_prompt(token_usage_info)
                 
                 # CRITICAL FIX: Also trim message_history to prevent re-accumulation
                 # Calculate how many message objects (from original message_history) to keep
@@ -719,7 +744,7 @@ class AgentCore:
         
         # Log final context report
         if status != "OK":
-            logger.warning(f"[CONTEXT_WARNING] Status={status}, needs_flush={needs_flush}")
+            logger.warning(f"[CONTEXT_WARNING] Status={status}, should_flush={should_flush}")
             try:
                 self.audit_logger.log(
                     event_type="context_threshold_warning",
@@ -733,6 +758,37 @@ class AgentCore:
                 logger.error(f"Failed to log context warning: {e}")
         
         return repaired_messages
+
+    def _build_system_prompt(self, suffix: str = "") -> str:
+        """Build system prompt with baseline behavior and optional recall guidance."""
+        base_prompt = self.config.system_prompt or ""
+        memory_recall_block = self._build_memory_recall_block()
+
+        prompt_parts = [base_prompt.strip()] if base_prompt else []
+        if memory_recall_block:
+            prompt_parts.append(memory_recall_block)
+        if suffix:
+            prompt_parts.append(suffix.strip())
+
+        return "\n\n".join(part for part in prompt_parts if part)
+
+    def _build_memory_recall_block(self) -> str:
+        """Return recall policy guidance if memory retrieval is available."""
+        if "retrieve_memory" not in self.tools:
+            return ""
+
+        return """[MEMORY RECALL POLICY]
+Before answering questions that depend on earlier decisions, preferences, constraints, TODOs, or historical commitments, call retrieve_memory first.
+
+When to recall first:
+- The user asks what was decided before.
+- The user asks to continue prior tasks or plans.
+- The user asks about preferences, environment constraints, or remembered facts.
+
+How to respond:
+- Ground the answer in retrieved memory results when available.
+- If memory is missing or uncertain, say so clearly and ask a clarifying follow-up.
+- Do not fabricate prior decisions or commitments."""
     
     async def _execute_memory_flush_with_context(self, history_messages: list[Message]) -> dict:
         """Execute memory flush with FULL conversation context so agent can extract key info.
@@ -787,166 +843,246 @@ class AgentCore:
         # Get tools for LLM
         tools_for_llm = self._format_tools_for_llm()
         
-        # Call LLM
-        try:
-            llm_response, tool_calls = await self.llm_provider.generate(
-                messages=messages,
-                tools=tools_for_llm,
-                temperature=0.3,  # Higher than 0 to encourage tool calling
-            )
-            
-            logger.warning(f"[MEMORY_FLUSH] 📨 LLM Response: {llm_response[:100] if llm_response else '(empty)'}...")
-            
-            if not tool_calls:
-                logger.warning(f"[MEMORY_FLUSH] ⚠️  No tool calls. Agent saw context but didn't extract memory")
-                logger.warning(f"[MEMORY_FLUSH]    Response: {llm_response}")
-                
-                # Still mark success since context was available
+        max_loops = 5
+        files_saved = 0
+        
+        for loop_idx in range(max_loops):
+            logger.warning(f"[MEMORY_FLUSH] 🔄 Loop {loop_idx+1}/{max_loops} - Calling LLM...")
+            try:
+                llm_response, tool_calls = await self.llm_provider.generate(
+                    messages=messages,
+                    tools=tools_for_llm,
+                    temperature=0.3, # Allow slight creativity for synthesizing memory
+                )
+            except Exception as e:
+                logger.error(f"[MEMORY_FLUSH] LLM flush call failed: {e}")
                 return {
-                    "success": True,
-                    "error": "Agent did not call write_memory_file",
+                    "success": False,
+                    "error": str(e),
                     "files_saved": 0
                 }
             
-            # Process tool calls
-            logger.warning(f"[MEMORY_FLUSH] 🔧 Processing {len(tool_calls)} tool calls...")
-            files_saved = 0
+            # Record assistant response in temporary history
+            assistant_message = {
+                "role": "assistant",
+                "content": llm_response or ""
+            }
+            if tool_calls:
+                # Need to convert internal Object format to strictly matching OpenAI schema format
+                # Using the identical logic the LLM provider mapping does internally (or close to it)
+                formatted_tools = []
+                for tc in tool_calls:
+                    formatted_tools.append({
+                        "id": tc.tool_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments) if isinstance(tc.arguments, dict) else tc.arguments
+                        }
+                    })
+                assistant_message["tool_calls"] = formatted_tools
+            messages.append(assistant_message)
             
-            for tool_call in tool_calls:
-                if tool_call.name == "write_memory_file":
-                    result = await self._process_tool_call(tool_call)
-                    if result.status == "success":
-                        files_saved += 1
-                        logger.warning(f"[MEMORY_FLUSH] ✅ Memory file saved via tool call")
+            logger.warning(f"[MEMORY_FLUSH] 📨 LLM Response: {llm_response[:100] if llm_response else '(empty)'}...")
+            
+            # End loop if LLM indicated it has finished
+            if self.memory_flush_session.check_for_silent_reply(llm_response):
+                logger.warning(f"[MEMORY_FLUSH] ✅ [SILENT_REPLY] marker detected. Terminating loop.")
+                break
+                
+            flush_tool_calls = tool_calls if tool_calls else []
+            if flush_tool_calls:
+                logger.warning(f"[MEMORY_FLUSH] 🔧 Processing {len(flush_tool_calls)} tool call(s):")
+                for i, tool_call in enumerate(flush_tool_calls, 1):
+                    logger.warning(f"[MEMORY_FLUSH]    ({i}/{len(flush_tool_calls)}) {tool_call.name}...")
+                    try:
+                        result = await self._process_tool_call(tool_call)
                         
-                        # Phase 4 Step 3: Also save to SQLite MemoryManager
-                        try:
-                            # Extract content from arguments
-                            content = tool_call.arguments.get("content", "")
-                            filename = tool_call.arguments.get("filename", "unknown.md")
+                        # Record tool result in temporary history
+                        content_val = ""
+                        if result.status == "success":
+                            content_val = json.dumps(result.result) if not isinstance(result.result, str) else result.result
+                        else:
+                            content_val = f"Error: {result.error}"
+
+                        # Hard limit to prevent token overflows
+                        MAX_RESULT_CHARS = 10000
+                        if len(content_val) > MAX_RESULT_CHARS:
+                            logger.warning(f"[MEMORY_FLUSH] Truncating tool output from {len(content_val)} to {MAX_RESULT_CHARS} chars")
+                            content_val = content_val[:MAX_RESULT_CHARS] + f"\n\n... [Output truncated because it exceeded {MAX_RESULT_CHARS} characters]"
+
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.tool_id,
+                            "content": content_val
+                        })
+                        logger.info(f"[MEMORY_FLUSH] Append tool message. Call ID: {tool_call.tool_id}, output size: {len(content_val)}")
+                        
+                        if result.status == "success":
+                            logger.warning(f"[MEMORY_FLUSH]        ✅ SUCCESS")
                             
-                            if content:
-                                self.memory_manager.add_memory(
-                                    content=content,
-                                    source=f"file:{filename}",
-                                    session_id=self.current_session.session_id if self.current_session else "unknown",
-                                    metadata={"filename": filename, "flush_type": "context_aware"}
-                                )
-                                logger.warning(f"[MEMORY_FLUSH] 🧠 Also indexed to SQLite MemoryManager")
-                        except Exception as e:
-                            logger.error(f"[MEMORY_FLUSH] Failed to index memory to SQLite: {e}")
-                            
-                    else:
-                        logger.warning(f"[MEMORY_FLUSH] ⚠️  Tool call failed: {result.error}")
+                            # Phase 4 Step 3: SQLite logging for write_memory_file only
+                            if tool_call.name == "write_memory_file":
+                                files_saved += 1
+                                try:
+                                    content = tool_call.arguments.get("content", "")
+                                    filename = tool_call.arguments.get("filename", "unknown.md")
+                                    
+                                    if content:
+                                        self.memory_manager.add_memory(
+                                            content=content,
+                                            source=f"file:{filename}",
+                                            session_id=self.current_session.session_id if self.current_session else "unknown",
+                                            metadata={"filename": filename, "flush_type": "context_aware"}
+                                        )
+                                        logger.warning(f"[MEMORY_FLUSH]        🧠 Also indexed to SQLite MemoryManager")
+                                except Exception as e:
+                                    logger.error(f"[MEMORY_FLUSH]        ❌ Failed to index memory to SQLite: {e}")
+                                    
+                    except Exception as e:
+                        logger.error(f"[MEMORY_FLUSH]        ❌ Tool execution exception: {e}")
+            else:
+                # No tool calls and no silent reply? Break loop. Let's force completion
+                logger.warning(f"[MEMORY_FLUSH] ⚠️  No tool calls and no [SILENT_REPLY]. Terminating loop.")
+                break
+        else:
+            logger.warning(f"[MEMORY_FLUSH] ⚠️ Reached maximum iterations ({max_loops}). Terminating loop.")
             
-            logger.warning(f"[MEMORY_FLUSH] 💾 Total files saved: {files_saved}")
+        logger.warning(f"[MEMORY_FLUSH] 💾 Total files saved: {files_saved}")
             
-            # Now compress the history
-            if history_messages:
-                logger.warning(f"[MEMORY_FLUSH] 📦 Compressing history from {len(self.message_history)} messages...")
-                self.message_history = self.message_history[-5:] if len(self.message_history) > 5 else self.message_history
-                logger.warning(f"[MEMORY_FLUSH]    Compressed to {len(self.message_history)} messages")
-            
-            return {
-                "success": True,
-                "error": None,
-                "files_saved": files_saved
-            }
-            
-        except Exception as e:
-            logger.error(f"[MEMORY_FLUSH] ❌ Flush failed: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            return {
-                "success": False,
-                "error": str(e),
-                "files_saved": 0
-            }
+        # Now compress the history
+        if history_messages:
+            logger.warning(f"[MEMORY_FLUSH] 📦 Compressing history from {len(self.message_history)} messages...")
+            self.message_history = self.message_history[-5:] if len(self.message_history) > 5 else self.message_history
+            logger.warning(f"[MEMORY_FLUSH]    Compressed to {len(self.message_history)} messages")
+        
+        return {
+            "success": True,
+            "error": None,
+            "files_saved": files_saved
+        }
     
     async def _execute_memory_flush_standalone(self) -> None:
-        """Execute memory flush as a standalone LLM call (only flush, no other task).
+        """Execute memory flush as a nested sub-loop (read before write).
         
         Phase 4: This is called BEFORE processing a user message that would trigger flush.
-        The LLM gets a single system message: the flush prompt, and its only task is to
-        call write_memory_file tool and return [SILENT_REPLY].
+        We provide the LLM with a temporary copy of the message history, inject the flush prompt,
+        and run a mini-loop allowing it to look up existing memories before saving.
         """
-        logger.warning("[MEMORY_FLUSH] 🚀 Starting standalone flush execution...")
+        logger.warning("[MEMORY_FLUSH] 🚀 Starting standalone flush execution (Nested Loop)...")
         
-        # Create a minimal message list with ONLY the flush prompt
-        # CRITICAL: Use "user" role for flush prompt to avoid consecutive "system" roles
-        # which cause LLM API 400 errors (format issue with some providers)
-        flush_only_messages = [
-            {
-                "role": "system",
-                "content": "You are an AI assistant helping preserve conversation memory."
-            },
-            {
-                "role": "user",  # Changed from "system" to "user" to avoid format error
-                "content": self.memory_flush_session.create_flush_system_prompt(),
-            }
-        ]
+        import copy
+        # Create a deep copy of current history to provide context
+        temp_messages = copy.deepcopy(self.message_history)
+        
+        # Append the flush prompt
+        temp_messages.append({
+            "role": "user",
+            "content": self.memory_flush_session.create_flush_system_prompt()
+        })
         
         tools_for_llm = self._format_tools_for_llm()
         
-        # Call LLM with ONLY flush prompt
-        logger.warning("[MEMORY_FLUSH] 📞 Calling LLM with flush-only prompt...")
-        try:
-            llm_response, tool_calls = await self.llm_provider.generate(
-                messages=flush_only_messages,
-                tools=tools_for_llm,
-                temperature=self.config.temperature,
-            )
-        except Exception as e:
-            logger.error(f"[MEMORY_FLUSH] LLM flush call failed: {e}")
-            return
+        max_loops = 5
         
-        logger.warning(f"[MEMORY_FLUSH] 📨 LLM Response: {llm_response[:100] if llm_response else '(empty)'}...")
-        
-        # Check for [SILENT_REPLY] marker
-        has_flush_marker = self.memory_flush_session.check_for_silent_reply(llm_response)
-        if not has_flush_marker:
-            logger.warning(f"[MEMORY_FLUSH] ⚠️  [SILENT_REPLY] marker NOT found in response!")
-            logger.warning(f"[MEMORY_FLUSH]    Response: {llm_response[:200] if llm_response else '(empty)'}...")
-        else:
-            logger.warning(f"[MEMORY_FLUSH] ✅ [SILENT_REPLY] marker detected")
-        
-        # Process tool calls (write_memory_file)
-        flush_tool_calls = tool_calls if tool_calls else []
-        if flush_tool_calls:
-            logger.warning(f"[MEMORY_FLUSH] 🔧 Processing {len(flush_tool_calls)} tool call(s):")
-            for i, tool_call in enumerate(flush_tool_calls, 1):
-                logger.warning(f"[MEMORY_FLUSH]    ({i}/{len(flush_tool_calls)}) {tool_call.name}...")
-                try:
-                    result = await self._process_tool_call(tool_call)
-                    if result.status == "success":
-                        logger.warning(f"[MEMORY_FLUSH]        ✅ SUCCESS")
+        for loop_idx in range(max_loops):
+            logger.warning(f"[MEMORY_FLUSH] 🔄 Loop {loop_idx+1}/{max_loops} - Calling LLM...")
+            try:
+                llm_response, tool_calls = await self.llm_provider.generate(
+                    messages=temp_messages,
+                    tools=tools_for_llm,
+                    temperature=0.3, # Allow slight creativity for synthesizing memory
+                )
+            except Exception as e:
+                logger.error(f"[MEMORY_FLUSH] LLM flush call failed: {e}")
+                return
+            
+            # Record assistant response in temporary history
+            assistant_message = {
+                "role": "assistant",
+                "content": llm_response or ""
+            }
+            if tool_calls:
+                formatted_tools = []
+                for tc in tool_calls:
+                    formatted_tools.append({
+                        "id": tc.tool_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments) if isinstance(tc.arguments, dict) else tc.arguments
+                        }
+                    })
+                assistant_message["tool_calls"] = formatted_tools
+            temp_messages.append(assistant_message)
+            
+            logger.warning(f"[MEMORY_FLUSH] 📨 LLM Response: {llm_response[:100] if llm_response else '(empty)'}...")
+            
+            # End loop if LLM indicated it has finished
+            if self.memory_flush_session.check_for_silent_reply(llm_response):
+                logger.warning(f"[MEMORY_FLUSH] ✅ [SILENT_REPLY] marker detected. Terminating loop.")
+                break
+                
+            flush_tool_calls = tool_calls if tool_calls else []
+            if flush_tool_calls:
+                logger.warning(f"[MEMORY_FLUSH] 🔧 Processing {len(flush_tool_calls)} tool call(s):")
+                for i, tool_call in enumerate(flush_tool_calls, 1):
+                    logger.warning(f"[MEMORY_FLUSH]    ({i}/{len(flush_tool_calls)}) {tool_call.name}...")
+                    try:
+                        result = await self._process_tool_call(tool_call)
                         
-                        # Phase 4 Step 3: Also save to SQLite MemoryManager
-                        try:
-                            # Extract content from arguments
-                            content = tool_call.arguments.get("content", "")
-                            filename = tool_call.arguments.get("filename", "unknown.md")
-                            
-                            if content:
-                                self.memory_manager.add_memory(
-                                    content=content,
-                                    source=f"file:{filename}",
-                                    session_id=self.current_session.session_id if self.current_session else "unknown",
-                                    metadata={"filename": filename, "flush_type": "standalone"}
-                                )
-                                logger.warning(f"[MEMORY_FLUSH]        🧠 Also indexed to SQLite MemoryManager")
-                        except Exception as e:
-                            logger.error(f"[MEMORY_FLUSH]        ❌ Failed to index memory to SQLite: {e}")
+                        # Record tool result in temporary history
+                        content_val = ""
+                        if result.status == "success":
+                            content_val = json.dumps(result.result) if not isinstance(result.result, str) else result.result
+                        else:
+                            content_val = f"Error: {result.error}"
 
-                    else:
-                        logger.warning(f"[MEMORY_FLUSH]        ⚠️  {result.status}")
-                        if result.error:
-                            logger.warning(f"[MEMORY_FLUSH]        Error: {result.error}")
-                except Exception as e:
-                    logger.error(f"[MEMORY_FLUSH]        ❌ {e}")
+                        # Hard limit to prevent token overflows
+                        MAX_RESULT_CHARS = 10000
+                        if len(content_val) > MAX_RESULT_CHARS:
+                            logger.warning(f"[MEMORY_FLUSH] Truncating tool output from {len(content_val)} to {MAX_RESULT_CHARS} chars")
+                            content_val = content_val[:MAX_RESULT_CHARS] + f"\n\n... [Output truncated because it exceeded {MAX_RESULT_CHARS} characters]"
+
+                        temp_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.tool_id,
+                            "content": content_val
+                        })
+                        logger.info(f"[MEMORY_FLUSH] Append tool message. Call ID: {tool_call.tool_id}, output size: {len(content_val)}")
+                        
+                        if result.status == "success":
+                            logger.warning(f"[MEMORY_FLUSH]        ✅ SUCCESS")
+                            
+                            # Phase 4 Step 3: SQLite logging for write_memory_file only
+                            if tool_call.name == "write_memory_file":
+                                try:
+                                    content = tool_call.arguments.get("content", "")
+                                    filename = tool_call.arguments.get("filename", "unknown.md")
+                                    
+                                    if content:
+                                        self.memory_manager.add_memory(
+                                            content=content,
+                                            source=f"file:{filename}",
+                                            session_id=self.current_session.session_id if self.current_session else "unknown",
+                                            metadata={"filename": filename, "flush_type": "standalone"}
+                                        )
+                                        logger.warning(f"[MEMORY_FLUSH]        🧠 Also indexed to SQLite MemoryManager")
+                                except Exception as e:
+                                    logger.error(f"[MEMORY_FLUSH]        ❌ Failed to index memory to SQLite: {e}")
+                                    
+                        else:
+                            logger.warning(f"[MEMORY_FLUSH]        ⚠️  {result.status}")
+                            if result.error:
+                                logger.warning(f"[MEMORY_FLUSH]        Error: {result.error}")
+                    except Exception as e:
+                        logger.error(f"[MEMORY_FLUSH]        ❌ Tool execution exception: {e}")
+            else:
+                # No tool calls and no silent reply? Break loop. Let's force completion
+                logger.warning(f"[MEMORY_FLUSH] ⚠️  No tool calls and no [SILENT_REPLY]. Terminating loop.")
+                break
         else:
-            logger.warning(f"[MEMORY_FLUSH] ⚠️  NO TOOL CALLS in flush response")
-            logger.warning(f"[MEMORY_FLUSH]    This means memory files were NOT saved!")
+            logger.warning(f"[MEMORY_FLUSH] ⚠️ Reached maximum iterations ({max_loops}). Terminating loop.")
         
         # Wait for files to be written
         import time
@@ -1070,36 +1206,52 @@ class AgentCore:
     def _format_tools_for_llm(self) -> list[dict[str, Any]]:
         """Format registered tools for LLM function calling.
         
-        Outputs OpenAI-standard format:
-        {
-            "type": "function",
-            "function": {
-                "name": "...",
-                "description": "...",
-                "parameters": {
-                    "type": "object",
-                    "properties": {...},
-                    "required": [...]
-                }
-            }
-        }
+        Outputs OpenAI-standard format.
+        Robustly handles multiple parameter schema shapes:
+        - Legacy: {"param": {"type": "...", "description": "..."}}
+        - JSON Schema: {"type": "object", "properties": {...}, "required": [...]}
+        - Shorthand: {"param": "string"}
         """
-        tools_list = []
+        tools_list: list[dict[str, Any]] = []
         for tool in self.tools.values():
-            # Build JSON Schema parameters from tool.parameters
-            properties = {}
-            required = []
+            properties_schema: dict[str, Any] = {}
+            required: list[str] = []
             
-            for param_name, param_info in (tool.parameters or {}).items():
-                prop = {
-                    "type": param_info.get("type", "string"),
-                    "description": param_info.get("description", ""),
-                }
-                properties[param_name] = prop
+            raw_params = tool.parameters or {}
+            
+            # If tool.parameters is a JSON Schema with "properties", prefer that
+            if isinstance(raw_params, dict) and "properties" in raw_params and isinstance(raw_params["properties"], dict):
+                props_source = raw_params["properties"]
+                required = list(raw_params.get("required", []))
+            else:
+                props_source = raw_params  # assume mapping param_name -> param_info
+            
+            # Build properties schema, tolerant to string or dict param_info
+            for param_name, param_info in props_source.items():
+                if isinstance(param_info, str):
+                    prop_type = param_info
+                    description = ""
+                    optional = False
+                elif isinstance(param_info, dict):
+                    prop_type = param_info.get("type", "string")
+                    description = param_info.get("description", "")
+                    optional = param_info.get("optional", False)
+                else:
+                    # Unknown shape - coerce to string
+                    prop_type = "string"
+                    description = ""
+                    optional = False
                 
-                # Treat all params as required unless explicitly optional
-                if not param_info.get("optional", False):
-                    required.append(param_name)
+                properties_schema[param_name] = {
+                    "type": prop_type,
+                    "description": description,
+                }
+                
+                # If JSON Schema 'required' present we already populated required list above.
+                # Otherwise, treat as required unless explicitly optional.
+                if not required:
+                    if not optional:
+                        required.append(param_name)
             
             tools_list.append({
                 "type": "function",
@@ -1108,7 +1260,7 @@ class AgentCore:
                     "description": tool.description,
                     "parameters": {
                         "type": "object",
-                        "properties": properties,
+                        "properties": properties_schema,
                         "required": required,
                     },
                 },

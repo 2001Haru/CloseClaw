@@ -238,6 +238,17 @@ class ConfigLoader:
         
         # Context management config (Phase 4)
         cm_raw = raw_config.get("context_management", {})
+        legacy_max_tokens = raw_config.get("max_context_tokens")
+
+        if legacy_max_tokens is not None and "max_tokens" not in cm_raw:
+            # Backward-compatible path: use legacy field when context_management.max_tokens is absent.
+            cm_raw = {**cm_raw, "max_tokens": legacy_max_tokens}
+        elif legacy_max_tokens is not None and cm_raw.get("max_tokens") != legacy_max_tokens:
+            logger.warning(
+                "Config has both max_context_tokens and context_management.max_tokens with different values; "
+                "using context_management.max_tokens as source of truth."
+            )
+
         context_management = ContextManagementConfig(
             max_tokens=cm_raw.get("max_tokens", 100000),
             warning_threshold=cm_raw.get("warning_threshold", 0.75),
@@ -258,6 +269,7 @@ class ConfigLoader:
             max_iterations=raw_config.get("max_iterations", 10),
             timeout_seconds=raw_config.get("timeout_seconds", 300),
             system_prompt=raw_config.get("system_prompt"),
+            max_context_tokens=context_management.max_tokens,
             log_level=raw_config.get("log_level", "INFO"),
             state_file=raw_config.get("state_file", "state.json"),
             interaction_log_file=raw_config.get("interaction_log_file", "interaction.md"),
@@ -330,6 +342,9 @@ timeout_seconds: 300
 system_prompt: |
   You are CloseClaw, a safe and precise AI assistant.
   Follow all security guidelines.
+    Before answering questions that depend on past decisions, preferences, TODOs, or constraints,
+    use retrieve_memory first and ground your answer in retrieved results.
+    If memory is uncertain, say so clearly and ask a follow-up question.
 
 # Logging
 log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
