@@ -171,7 +171,7 @@ class TelegramChannel(BaseChannel):
                 else:
                     raise
         
-        if resp_type == "response":
+        if resp_type in {"response", "assistant_message"}:
             text = response.get("response", "")
             tool_calls = response.get("tool_calls", [])
             tool_results = response.get("tool_results", [])

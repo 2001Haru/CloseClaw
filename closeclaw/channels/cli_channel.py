@@ -51,7 +51,6 @@ class CLIChannel(BaseChannel):
         self.user_id = user_id
         self.user_name = user_name
         self._message_counter = 0
-        self._auth_responses: dict[str, asyncio.Future] = {}
     
     async def start(self) -> None:
         """Start CLI channel."""
@@ -112,7 +111,7 @@ class CLIChannel(BaseChannel):
         """
         resp_type = response.get("type", "response")
         
-        if resp_type == "response":
+        if resp_type in {"response", "assistant_message"}:
             text = response.get("response", "")
             tool_calls = response.get("tool_calls", [])
             tool_results = response.get("tool_results", [])
@@ -217,7 +216,11 @@ class CLIChannel(BaseChannel):
         )
     
     async def _handle_auth_request(self, response: dict[str, Any]) -> None:
-        """Handle auth_request type response (dispatches send + wait)."""
+        """Handle auth_request type response (display only).
+
+        Input collection is handled by AgentCore via auth_response_fn.
+        Keeping input here would cause duplicate prompts in CLI.
+        """
         auth_request_id = response.get("auth_request_id", "unknown")
         tool_name = response.get("tool_name", "unknown")
         description = response.get("description", "")
@@ -229,17 +232,6 @@ class CLIChannel(BaseChannel):
             description=description,
             diff_preview=diff_preview,
         )
-        
-        # Wait for user input inline
-        auth_response = await self.wait_for_auth_response(auth_request_id)
-        
-        if auth_response:
-            # Store for AgentCore to pick up
-            self._auth_responses[auth_request_id] = auth_response
-    
-    def get_pending_auth_response(self, auth_request_id: str) -> Optional[AuthorizationResponse]:
-        """Retrieve a stored auth response (used by AgentCore)."""
-        return self._auth_responses.pop(auth_request_id, None)
     
     def _print_banner(self) -> None:
         """Print startup banner."""

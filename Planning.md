@@ -9,6 +9,43 @@
 
 ### 实现计划
 
+## 阶段状态总览（更新于 2026-03-18）
+
+以下状态依据现有阶段文档统一回填：
+
+1. [PHASE1_SUMMARY.md](PHASE1_SUMMARY.md)
+2. [PHASE2_SUMMARY.md](PHASE2_SUMMARY.md)
+3. [PHASE3_SUMMARY.md](PHASE3_SUMMARY.md)
+4. [PHASE3.5_COMPLETION.md](PHASE3.5_COMPLETION.md)
+5. [PHASE4_STEP1_COMPLETION.md](PHASE4_STEP1_COMPLETION.md)
+6. [PHASE4_STEP2_COMPLETION.md](PHASE4_STEP2_COMPLETION.md)
+7. [PHASE4_STEP3_COMPLETION.md](PHASE4_STEP3_COMPLETION.md)
+8. [Phase5_Complex_Task_Upgrade_Plan.md](Phase5_Complex_Task_Upgrade_Plan.md)
+
+### 已完成
+
+- [x] **Phase 1 基础架构**：类型系统、三层安全、配置系统、审计日志、基础工具框架完成。
+- [x] **Phase 2 Agent 核心重构**：TaskManager、混合异步主循环、任务持久化与CLI任务管理完成。
+- [x] **Phase 3 渠道与工具接入**：Telegram/Feishu/CLI 三通道闭环完成，HITL 链路打通。
+- [x] **Phase 3.5 稳定性增强**：Transcript Repair 防火墙完成并通过专项测试。
+- [x] **Phase 4 Step 1**：ContextManager + Token 计数 + 压实策略完成。
+- [x] **Phase 4 Step 2**：Memory Flush 诱导与事后通知流程完成。
+- [x] **Phase 4 Step 3**：SQLite + 向量/全文混合检索 + retrieve_memory 工具链完成。
+
+### 未完成（按当前 Phase5 口径）
+
+- [ ] **Phase 5 P0 设计冻结**：Orchestrator 契约文档冻结与评审未完成。
+- [ ] **Phase 5 P1 MVP 实现**：单主循环 Orchestrator（PLAN/ACT/OBSERVE/DECIDE）尚未落地到代码。
+- [ ] **Phase 5 Case-001 验收**：同轮“检索 + 总结答复”端到端验收未完成。
+- [ ] **Phase 5 P2 Guard/Hook 融合**：flush/compact/recall 触发点单一化尚未完成。
+- [ ] **Phase 5 P3 复杂任务增强**：progress/no-progress、重规划与结构化 plan_update 尚未完成。
+- [ ] **Phase 5 灰度发布与回滚演练**：feature flag 灰度、回滚脚本与发布门禁未完成。
+
+### 结论
+
+- 当前可视为 **Phase 4 核心建设已完成，Phase 5 进入可开工状态（计划完成、实现未启动）**。
+- 本计划书内较早期“Phase 2 待办”复选框存在历史残留，以本节状态为当前真值。
+
 #### 重要原则
 重点参考仓库CloseClaw/OpenXJavis，其次可以借鉴Nanobot/nanobot。只允许修改CloseClaw/CloseClaw仓库内容，不允许对其他仓库做任何修改！（如特殊情况必须提出请求）
 
@@ -96,10 +133,15 @@
    - 性能优化：内存占用目标 < 50MB（不含容器），异步非阻塞设计。
    - 审计日志实现：所有操作记录到 audit.log。
 
-5. **Phase 5: 文档与发布**（1 周）
-   - 编写精简文档：README < 500 行，快速开始 + FAQ。
-   - 提供示例配置文件（config.yaml 模板）。
-   - 发布初始版本（pip 可安装）。
+   ##现在记忆检索基本完成，我将一些优化（更具体的topics分类，embedding缓存，更主动积极的检索回忆等等）暂时搁置
+
+5. **Phase 5: 复杂任务编排升级（当前主线）**（约 2-4 周）
+  - 建立唯一 Orchestrator 主循环（PLAN/ACT/OBSERVE/DECIDE），禁止并行主循环。
+  - 统一 Action 协议（至少支持 tool_call/final_answer/plan_update）。
+  - 同轮收束能力：确保工具调用后在同轮形成可交付答复（修复“只回复OK”路径）。
+  - 将 flush/compact/recall 归并到 Guard/Hook，消除多点触发。
+  - 通过 feature flag 进行会话级灰度发布，提供可回滚机制。
+  - 以 [Phase5_Complex_Task_Upgrade_Plan.md](Phase5_Complex_Task_Upgrade_Plan.md) 为实施基线。
 
 #### 核心设计决策总结：三层防护 + 零 Docker 部署
 

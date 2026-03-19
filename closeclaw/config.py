@@ -96,6 +96,53 @@ class ContextManagementConfig:
 
 
 @dataclass
+class Phase5TelemetryConfig:
+    """Phase 5 telemetry configuration."""
+    enabled: bool = True
+    log_actions: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "log_actions": self.log_actions,
+        }
+
+
+@dataclass
+class Phase5RolloutConfig:
+    """Phase 5 rollout configuration (P1 uses allowlist + kill-switch)."""
+    mode: str = "session_allowlist"  # off | session_allowlist
+    session_allowlist: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode,
+            "session_allowlist": self.session_allowlist,
+        }
+
+
+@dataclass
+class Phase5Config:
+    """Phase 5 orchestrator controls."""
+    max_steps: int = 6
+    max_tokens_per_run: int = 120000
+    max_wall_time_seconds: int = 45
+    no_progress_limit: int = 2
+    telemetry: Phase5TelemetryConfig = field(default_factory=Phase5TelemetryConfig)
+    rollout: Phase5RolloutConfig = field(default_factory=Phase5RolloutConfig)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "max_steps": self.max_steps,
+            "max_tokens_per_run": self.max_tokens_per_run,
+            "max_wall_time_seconds": self.max_wall_time_seconds,
+            "no_progress_limit": self.no_progress_limit,
+            "telemetry": self.telemetry.to_dict(),
+            "rollout": self.rollout.to_dict(),
+        }
+
+
+@dataclass
 class CloseCrawlConfig:
     """Main CloseClaw configuration."""
     agent_id: str
@@ -111,6 +158,7 @@ class CloseCrawlConfig:
     state_file: str = "state.json"
     interaction_log_file: str = "interaction.md"
     context_management: ContextManagementConfig = field(default_factory=ContextManagementConfig)
+    phase5: Phase5Config = field(default_factory=Phase5Config)
     
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -127,6 +175,7 @@ class CloseCrawlConfig:
             "state_file": self.state_file,
             "interaction_log_file": self.interaction_log_file,
             "context_management": self.context_management.to_dict(),
+            "phase5": self.phase5.to_dict(),
         }
 
 
@@ -258,6 +307,26 @@ class ConfigLoader:
             chunk_size=cm_raw.get("chunk_size", 5000),
             retention_days=cm_raw.get("retention_days", 90),
         )
+
+        # Phase 5 config
+        p5_raw = raw_config.get("phase5", {})
+        p5_telemetry_raw = p5_raw.get("telemetry", {})
+        p5_rollout_raw = p5_raw.get("rollout", {})
+
+        phase5 = Phase5Config(
+            max_steps=p5_raw.get("max_steps", 6),
+            max_tokens_per_run=p5_raw.get("max_tokens_per_run", 120000),
+            max_wall_time_seconds=p5_raw.get("max_wall_time_seconds", 45),
+            no_progress_limit=p5_raw.get("no_progress_limit", 2),
+            telemetry=Phase5TelemetryConfig(
+                enabled=p5_telemetry_raw.get("enabled", True),
+                log_actions=p5_telemetry_raw.get("log_actions", True),
+            ),
+            rollout=Phase5RolloutConfig(
+                mode=p5_rollout_raw.get("mode", "session_allowlist"),
+                session_allowlist=p5_rollout_raw.get("session_allowlist", []),
+            ),
+        )
         
         # Main config
         config = CloseCrawlConfig(
@@ -274,6 +343,7 @@ class ConfigLoader:
             state_file=raw_config.get("state_file", "state.json"),
             interaction_log_file=raw_config.get("interaction_log_file", "interaction.md"),
             context_management=context_management,
+            phase5=phase5,
         )
         
         return config

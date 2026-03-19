@@ -90,7 +90,8 @@ class TestFileTools:
         
         # Non-recursive
         files = await list_files_impl(str(temp_workspace), recursive=False)
-        assert len(files) == 2
+        assert len(files) == 3
+        assert any(p.endswith("subdir/") or p.endswith("subdir\\") for p in files)
         
         # Recursive
         all_files = await list_files_impl(str(temp_workspace), recursive=True)

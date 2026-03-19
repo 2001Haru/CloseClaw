@@ -98,3 +98,16 @@ log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
 # State persistence files
 state_file: "state.json"              # Machine-readable state
 interaction_log_file: "interaction.md"  # Human-readable log
+
+# Phase 5 Orchestrator (P1)
+phase5:
+  max_steps: 8
+  max_tokens_per_run: 120000
+  max_wall_time_seconds: 45
+  no_progress_limit: 2
+  telemetry:
+    enabled: true
+    log_actions: true
+  rollout:
+    mode: "session_allowlist"  # off | session_allowlist
+    session_allowlist: []

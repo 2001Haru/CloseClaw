@@ -43,8 +43,30 @@ You must NOT blindly write new memory files if similar topics already exist.
 3. CONSOLIDATE/WRITE:
    - If memories exist: Call `read_memory` to see their exact content, then use `write_memory_file` to update/overwrite them with combined information.
    - If NO memories exist: Use `write_memory_file` to create new files (e.g., `{self.memory_dir}/memory_config.md`).
-4. CONFIRM: ONLY when you have fully completed all searches, readings, and writings, you must reply with EXACTLY:
-   [SILENT_REPLY]
+4. CONTEXT SUMMARY: After all memory read/write actions are done, output a compact context summary in the exact format below:
+    [COMPACT_MEMORY_BLOCK]
+    # Recent user goal(s)
+    - Provide detailed intent, scope, and success criteria from this session.
+
+    # Important decisions/constraints
+    - Include concrete decisions, rejected options, environment/tool limits, and any approvals required.
+
+    # Completed actions
+    - List major operations with outcomes (tools used, key results, files touched when relevant).
+
+    # Pending next action
+    - Describe the immediate next step with enough detail that execution can resume without guessing.
+
+    # Open risks/questions
+    - Include unresolved uncertainties, assumptions, or potential failure points.
+
+    REQUIREMENTS:
+    - Be detailed and specific; do NOT output a one-line summary.
+    - Prefer bullet lists with concrete facts.
+    - Keep as much critical detail as possible within model limits.
+    [/COMPACT_MEMORY_BLOCK]
+5. CONFIRM: ONLY when you have fully completed all searches, readings, and writings, you must append EXACTLY:
+    [SILENT_REPLY]
 
 Note: You can use tools multiple times. Keep going until all critical information is safely stored.
 [END CRITICAL COMMAND]"""

@@ -168,6 +168,23 @@ class TestCLIChannel:
         assert "completed" in captured.out
         
         await channel.stop()
+
+    async def test_cli_auth_request_does_not_prompt_inline(self):
+        """CLI auth_request rendering should not read approval input directly."""
+        channel = CLIChannel()
+        await channel.start()
+
+        with patch.object(channel, "wait_for_auth_response", new_callable=AsyncMock) as wait_mock:
+            await channel.send_response({
+                "type": "auth_request",
+                "auth_request_id": "auth_123",
+                "tool_name": "write_file",
+                "description": "write_file requires authorization",
+                "diff_preview": None,
+            })
+
+        wait_mock.assert_not_awaited()
+        await channel.stop()
     
     async def test_cli_channel_auth_approve(self):
         """CLIChannel HITL confirmation - approve."""

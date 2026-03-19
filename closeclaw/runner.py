@@ -126,6 +126,16 @@ def create_agent(config: CloseCrawlConfig,
         llm=llm_settings,
         context_management=context_mgmt_settings,
     )
+
+    # Phase 5 config is carried via metadata to preserve AgentConfig compatibility.
+    agent_config.metadata["phase5"] = {
+        "max_steps": config.phase5.max_steps,
+        "max_tokens_per_run": config.phase5.max_tokens_per_run,
+        "max_wall_time_seconds": config.phase5.max_wall_time_seconds,
+        "no_progress_limit": config.phase5.no_progress_limit,
+        "telemetry": config.phase5.telemetry.to_dict(),
+        "rollout": config.phase5.rollout.to_dict(),
+    }
     
     # Auto-create LLM provider from config if not provided
     if llm_provider is None:

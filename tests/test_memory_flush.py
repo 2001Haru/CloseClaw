@@ -72,6 +72,14 @@ class TestMemoryFlushSession:
         text = "Normal response"
         result = flush_session.extract_silent_reply_content(text)
         assert result == text
+
+    def test_flush_prompt_includes_compact_memory_block_requirement(self, flush_session):
+        """Flush prompt should require a structured compact memory block before SILENT_REPLY."""
+        prompt = flush_session.create_flush_system_prompt()
+
+        assert "[COMPACT_MEMORY_BLOCK]" in prompt
+        assert "[/COMPACT_MEMORY_BLOCK]" in prompt
+        assert "[SILENT_REPLY]" in prompt
     
     def test_collect_saved_memories_empty(self, flush_session):
         """Test collecting memories from empty directory."""

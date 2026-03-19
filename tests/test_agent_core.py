@@ -558,3 +558,189 @@ class TestAgentIntegration:
         
         assert response is not None
         assert isinstance(response, dict)
+
+
+class TestCompactMemoryPromptInjection:
+    """Tests for compact memory synthetic prompt pair behavior."""
+
+    def test_compact_memory_pair_injected_before_history(self, sample_agent_config, mock_llm, temp_workspace):
+        agent = AgentCore(
+            agent_id="agent_001",
+            llm_provider=mock_llm,
+            config=sample_agent_config,
+            workspace_root=temp_workspace,
+        )
+
+        agent.compact_memory_snapshot = "This is compact memory."
+        agent.message_history = [
+            Message(
+                id="u1",
+                channel_type="cli",
+                sender_id="user_1",
+                sender_name="User",
+                content="New request",
+                timestamp=datetime.utcnow(),
+            )
+        ]
+
+        messages = agent._format_conversation_for_llm()
+
+        assert messages[0]["role"] == "system"
+        assert messages[1]["role"] == "user"
+        assert "compact memory" in messages[1]["content"].lower()
+        assert messages[2]["role"] == "assistant"
+        assert messages[2]["content"] == "This is compact memory."
+
+    def test_compact_memory_snapshot_updates_on_compaction(self, sample_agent_config, mock_llm, temp_workspace):
+        agent = AgentCore(
+            agent_id="agent_001",
+            llm_provider=mock_llm,
+            config=sample_agent_config,
+            workspace_root=temp_workspace,
+        )
+
+        agent.message_history = [
+            Message(
+                id="u1",
+                channel_type="cli",
+                sender_id="user_1",
+                sender_name="User",
+                content="Please remember this context",
+                timestamp=datetime.utcnow(),
+            ),
+            Message(
+                id="a1",
+                channel_type="cli",
+                sender_id=agent.agent_id,
+                sender_name="Agent",
+                content="Latest assistant summary before compression.",
+                timestamp=datetime.utcnow(),
+            ),
+        ]
+
+        with patch.object(agent.context_manager, "check_thresholds", return_value=("CRITICAL", False)):
+            with patch.object(
+                agent.message_compactor,
+                "apply_compression_strategy",
+                side_effect=lambda messages, token_count, usage_ratio, force: (messages, "truncate"),
+            ):
+                agent._format_conversation_for_llm()
+
+        assert agent.compact_memory_snapshot is not None
+        assert "Latest assistant summary before compression." in agent.compact_memory_snapshot
+
+
+class TestMemoryFlushTrigger:
+    """Regression tests for WARNING-threshold memory flush trigger."""
+
+    @pytest.mark.asyncio
+    async def test_warning_threshold_triggers_memory_flush(self, sample_agent_config, temp_workspace):
+        class FlushAwareLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def generate(self, messages, tools, **kwargs):
+                self.calls += 1
+                # Flush cycle: emit compact block and complete marker.
+                if any("CRITICAL ACTIVITY: CONTEXT COMPRESSION" in (m.get("content") or "") for m in messages):
+                    return (
+                        "[COMPACT_MEMORY_BLOCK]Recent goal and constraints retained.[/COMPACT_MEMORY_BLOCK] [SILENT_REPLY]",
+                        None,
+                    )
+                # Normal response path
+                return "Post-flush normal reply", None
+
+        cfg = sample_agent_config
+        cfg.context_management.max_tokens = 200
+        cfg.context_management.warning_threshold = 0.5
+        cfg.context_management.critical_threshold = 0.95
+
+        agent = AgentCore(
+            agent_id="agent_flush_trigger",
+            llm_provider=FlushAwareLLM(),
+            config=cfg,
+            workspace_root=temp_workspace,
+        )
+        agent.current_session = Session(
+            session_id="session_flush_trigger",
+            user_id="user_1",
+            channel_type="cli",
+        )
+
+        # Inflate history to WARNING range.
+        for i in range(20):
+            agent.message_history.append(Message(
+                id=f"u{i}",
+                channel_type="cli",
+                sender_id="user_1",
+                sender_name="User",
+                content="x" * 40,
+                timestamp=datetime.utcnow(),
+            ))
+
+        with patch.object(agent.context_manager, "check_thresholds", return_value=("WARNING", True)):
+            with patch.object(agent.memory_flush_session, "should_trigger_flush", return_value=True):
+                result = await agent.process_message(Message(
+                    id="u_new",
+                    channel_type="cli",
+                    sender_id="user_1",
+                    sender_name="User",
+                    content="new request",
+                    timestamp=datetime.utcnow(),
+                ))
+
+        assert result is not None
+        assert agent.compact_memory_snapshot is not None
+        assert "Recent goal and constraints retained." in agent.compact_memory_snapshot
+
+
+class TestCriticalContextFallback:
+    """Regression tests for CRITICAL hard fallback behavior."""
+
+    @pytest.mark.asyncio
+    async def test_critical_keeps_last_10_rounds_and_warns_user(self, sample_agent_config, temp_workspace):
+        class DirectAnswerLLM:
+            async def generate(self, messages, tools, **kwargs):
+                return "normal response", None
+
+        cfg = sample_agent_config
+        cfg.context_management.max_tokens = 200
+        cfg.context_management.warning_threshold = 0.5
+        cfg.context_management.critical_threshold = 0.8
+
+        agent = AgentCore(
+            agent_id="agent_critical_fallback",
+            llm_provider=DirectAnswerLLM(),
+            config=cfg,
+            workspace_root=temp_workspace,
+        )
+        agent.current_session = Session(
+            session_id="session_critical_fallback",
+            user_id="user_1",
+            channel_type="cli",
+        )
+
+        for i in range(60):
+            sender_id = "user_1" if i % 2 == 0 else agent.agent_id
+            sender_name = "User" if i % 2 == 0 else "Agent"
+            agent.message_history.append(Message(
+                id=f"m{i}",
+                channel_type="cli",
+                sender_id=sender_id,
+                sender_name=sender_name,
+                content="x" * 120,
+                timestamp=datetime.utcnow(),
+            ))
+
+        result = await agent.process_message(Message(
+            id="u_new",
+            channel_type="cli",
+            sender_id="user_1",
+            sender_name="User",
+            content="trigger critical",
+            timestamp=datetime.utcnow(),
+        ))
+
+        assert result is not None
+        assert "[CONTEXT WARNING]" in result.get("response", "")
+        assert len(agent.message_history) <= 21

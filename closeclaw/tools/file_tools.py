@@ -162,7 +162,7 @@ async def delete_file_impl(path: str) -> str:
 
 @tool(
     name="list_files",
-    description="List files in a directory",
+    description="List immediate child directories and files in a directory",
     zone=Zone.ZONE_A,
     tool_type=ToolType.FILE,
     parameters={
@@ -177,7 +177,11 @@ async def delete_file_impl(path: str) -> str:
     }
 )
 async def list_files_impl(path: str, recursive: bool = False) -> list[str]:
-    """List files in directory."""
+    """List directory entries.
+
+    - recursive=False: return only immediate children (both folders and files)
+    - recursive=True: return files up to one level deep (legacy behavior)
+    """
     try:
         files = []
         # Hard limit to prevent token overflow on massive directories
@@ -210,7 +214,9 @@ async def list_files_impl(path: str, recursive: bool = False) -> list[str]:
                     limit_reached = True
                     break
                 full_path = os.path.join(path, f)
-                if os.path.isfile(full_path):
+                if os.path.isdir(full_path):
+                    files.append(full_path + os.path.sep)
+                elif os.path.isfile(full_path):
                     files.append(full_path)
         
         if limit_reached:
