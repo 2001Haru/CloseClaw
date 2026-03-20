@@ -1,4 +1,4 @@
-"""Progress assessment primitives for Phase5 P3."""
+﻿"""Progress assessment primitives for Phase5 P3."""
 
 from dataclasses import dataclass
 
@@ -27,3 +27,4 @@ def assess_progress(previous_stagnation: int, tool_status: str, no_progress_limi
         stagnation_count=stagnation,
         replan_required=(stagnation >= no_progress_limit),
     )
+

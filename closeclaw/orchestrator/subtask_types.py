@@ -1,7 +1,7 @@
-"""Subtask interface contracts for Phase5 P4."""
+﻿"""Subtask interface contracts for Phase5 P4."""
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
@@ -75,4 +75,5 @@ class SubtaskRecord:
 
 def utcnow_iso() -> str:
     """Return current UTC timestamp in ISO format."""
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()
+

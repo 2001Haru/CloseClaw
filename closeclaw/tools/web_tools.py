@@ -1,4 +1,4 @@
-"""Web tools - HTTP fetching and web search.
+﻿"""Web tools - HTTP fetching and web search.
 
 Uses httpx.AsyncClient for non-blocking HTTP requests.
 """
@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from .base import tool
-from ..types import Zone, ToolType
+from ..types import ToolType
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 @tool(
     name="web_search",
     description="Search the web for information (stub - configure search API for production)",
-    zone=Zone.ZONE_A,
+    need_auth=False,
     tool_type=ToolType.WEBSEARCH,
     parameters={
         "query": {
@@ -57,7 +57,7 @@ async def web_search_impl(query: str, max_results: int = 5) -> list[dict[str, An
 @tool(
     name="fetch_url",
     description="Fetch content from a URL via HTTP GET",
-    zone=Zone.ZONE_A,
+    need_auth=False,
     tool_type=ToolType.WEBSEARCH,
     parameters={
         "url": {
@@ -128,3 +128,4 @@ async def fetch_url_impl(url: str, max_length: int = 10000) -> dict[str, Any]:
             "content": f"Error: {str(e)}",
             "content_length": 0,
         }
+

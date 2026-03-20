@@ -1,4 +1,4 @@
-"""In-memory subtask registry for Phase5 P4 interface reservation."""
+﻿"""In-memory subtask registry for Phase5 P4 interface reservation."""
 
 from typing import Any, Optional
 from uuid import uuid4
@@ -112,3 +112,4 @@ class SubtaskRegistry:
             record.result = SubtaskResult(status=new_status, output=output, error=error)
 
         return record
+

@@ -1,4 +1,4 @@
-"""Tests for configuration system."""
+﻿"""Tests for configuration system."""
 
 import pytest
 import os
@@ -216,21 +216,21 @@ llm:
 """
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
             f.write(custom_yaml)
-            f.flush()
-            
-            try:
-                loader = ConfigLoader()
-                config = loader.load(f.name)
-                
-                # Custom values
-                assert config.llm.provider == "anthropic"
-                assert config.llm.temperature == 0.5
-                
-                # Default values
-                assert config.llm.max_tokens == 2000
-                assert config.safety.enable_hitl is True
-            finally:
-                os.unlink(f.name)
+            temp_config_path = f.name
+
+        try:
+            loader = ConfigLoader()
+            config = loader.load(temp_config_path)
+
+            # Custom values
+            assert config.llm.provider == "anthropic"
+            assert config.llm.temperature == 0.5
+
+            # Default values
+            assert config.llm.max_tokens == 2000
+            assert config.safety.enable_hitl is True
+        finally:
+            os.unlink(temp_config_path)
     
     def test_config_to_dict(self, config_file):
         """Test converting config to dict."""
@@ -242,6 +242,21 @@ llm:
             assert "llm" in config_dict
             assert config_dict["llm"]["provider"] == "openai"
             assert "safety" in config_dict
+
+        def test_workspace_root_defaults_to_config_dir_when_missing(self, temp_workspace):
+                """When workspace_root is omitted, use config file directory instead of cwd."""
+                config_content = """
+llm:
+    provider: openai
+    model: gpt-4
+"""
+                config_path = Path(temp_workspace) / "minimal_config.yaml"
+                config_path.write_text(config_content)
+
+                loader = ConfigLoader()
+                config = loader.load(str(config_path))
+
+                assert config.workspace_root == str(Path(temp_workspace).resolve())
 
 
 class TestConfigEdgeCases:
@@ -260,4 +275,8 @@ class TestConfigEdgeCases:
         assert "2026-03-15" in config.audit_log_path
 
     # NOTE: test_very_large_timeout and test_zero_retention_days removed
-    # (决策4：只修关键的Config功能，edge case推迟到Phase2)
+    # (鍐崇瓥4锛氬彧淇叧閿殑Config鍔熻兘锛宔dge case鎺ㄨ繜鍒癙hase2)
+
+
+
+

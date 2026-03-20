@@ -1,8 +1,8 @@
-"""Phase 2 acceptance tests: end-to-end verification for core components."""
+﻿"""Phase 2 acceptance tests: end-to-end verification for core components."""
 
 import pytest
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 from closeclaw.agents import TaskManager
 from closeclaw.agents.core import AgentCore
@@ -62,3 +62,8 @@ async def test_agent_task_integration_and_state_persistence(tmp_path):
     # Ensure restored tasks exist in new manager
     assert t1 in new_tm.completed_results
     assert new_tm.completed_results[t1].status == TaskStatus.COMPLETED
+
+
+
+
+

@@ -1,9 +1,9 @@
-"""High-level domain models."""
+﻿"""High-level domain models."""
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol
 from datetime import datetime
-from .enums import Zone, AgentState, ToolType, TaskStatus
+from .enums import AgentState, ToolType, TaskStatus
 
 
 @dataclass
@@ -40,7 +40,7 @@ class ToolProtocol(Protocol):
     """Protocol for tool implementation."""
     name: str
     description: str
-    zone: Zone
+    need_auth: bool
     
     async def execute(self, **kwargs: Any) -> Any:
         """Execute the tool with given arguments."""
@@ -52,8 +52,8 @@ class Tool:
     """Tool definition with metadata."""
     name: str
     description: str
-    zone: Zone
     type: ToolType  # Tool type for middleware filtering (SHELL, FILE, WEBSEARCH, etc.)
+    need_auth: bool = False
     handler: Optional[Callable] = None
     parameters: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -62,7 +62,7 @@ class Tool:
         return {
             "name": self.name,
             "description": self.description,
-            "zone": self.zone.value,
+            "need_auth": self.need_auth,
             "type": self.type.value,
             "parameters": self.parameters,
             "metadata": self.metadata,
@@ -189,3 +189,5 @@ class Agent:
             "created_at": self.created_at.isoformat(),
             "metadata": self.metadata,
         }
+
+

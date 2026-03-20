@@ -1,9 +1,9 @@
-"""Channel base class - Abstract interface for all communication channels.
+﻿"""Channel base class - Abstract interface for all communication channels.
 
 All channels (Telegram, Feishu, CLI) must implement this interface.
 The interface is designed to plug directly into AgentCore.run():
-  - receive_message() → message_input_fn
-  - send_response() → message_output_fn
+  - receive_message() 鈫?message_input_fn
+  - send_response() 鈫?message_output_fn
 """
 
 import logging
@@ -19,9 +19,9 @@ class BaseChannel(ABC):
     """Abstract base class for communication channels.
     
     Each channel implementation must:
-    1. Convert external messages → internal Message objects
-    2. Convert internal responses → external format
-    3. Handle HITL confirmation (Zone C) via channel-native UI
+    1. Convert external messages 鈫?internal Message objects
+    2. Convert internal responses 鈫?external format
+    3. Handle HITL confirmation (need_auth tools) via channel-native UI
     4. Support async start/stop lifecycle
     
     Usage with AgentCore.run():
@@ -109,7 +109,7 @@ class BaseChannel(ABC):
                                 diff_preview: Optional[str] = None) -> None:
         """Send HITL confirmation request to user.
         
-        For Zone C operations, display the operation details and
+        For sensitive operations, display the operation details and
         wait for user confirmation via channel-native UI:
         - Telegram: Inline Keyboard buttons
         - Feishu: Interactive Card buttons
@@ -164,3 +164,5 @@ class BaseChannel(ABC):
             content=content,
             metadata=kwargs,
         )
+
+

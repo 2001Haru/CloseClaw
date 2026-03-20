@@ -1,4 +1,4 @@
-"""Tests for multi-channel runner (Phase 3).
+﻿"""Tests for multi-channel runner (Phase 3).
 
 Tests:
 - Channel creation from config
@@ -143,3 +143,7 @@ class TestPlaceholderLLM:
         response, tool_calls = await llm.generate([], tools=[])
         
         assert "Hello" in response
+
+
+
+

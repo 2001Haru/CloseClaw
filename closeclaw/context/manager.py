@@ -1,4 +1,4 @@
-"""Token counting and context monitoring for Phase 4."""
+﻿"""Token counting and context monitoring for Phase 4."""
 
 import logging
 import json
@@ -62,7 +62,7 @@ class ContextManager:
             Token count
         """
         if not tiktoken or not self._encoder:
-            # Fallback: rough approximation (1 token ≈ 4 chars)
+            # Fallback: rough approximation (1 token 鈮?4 chars)
             return len(text) // 4
         
         try:
@@ -148,3 +148,4 @@ class ContextManager:
     def json_report(self, token_count: int) -> str:
         """Generate JSON report of context usage."""
         return json.dumps(self.get_status_report(token_count), indent=2, ensure_ascii=False)
+

@@ -1,4 +1,4 @@
-"""Regression tests for context-interface cleanup and recall prompt injection."""
+﻿"""Regression tests for context-interface cleanup and recall prompt injection."""
 
 from closeclaw.agents.core import AgentCore
 from closeclaw.config import ConfigLoader
@@ -68,3 +68,7 @@ def test_build_config_uses_context_management_max_tokens_as_source_of_truth():
 
     assert config.context_management.max_tokens == 22222
     assert config.max_context_tokens == 22222
+
+
+
+

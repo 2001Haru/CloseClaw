@@ -1,4 +1,4 @@
-"""LLM provider implementations.
+﻿"""LLM provider implementations.
 
 Provides concrete LLM provider classes that implement the LLMProvider protocol
 defined in core.py. Currently supports:
@@ -79,7 +79,7 @@ class OpenAICompatibleProvider:
             **kwargs: Additional parameters to pass to the API
         
         Returns:
-            (response_text, tool_calls) — tool_calls is None if no tools called
+            (response_text, tool_calls) 鈥?tool_calls is None if no tools called
         """
         # Build request body
         body: dict[str, Any] = {
@@ -96,7 +96,7 @@ class OpenAICompatibleProvider:
             
         import json
         print("\n\n" + "="*80)
-        print("🚨 VERY VIOLENT DEBUG: EXACT LLM PROMPT PAYLOAD 🚨")
+        print("DEBUG: EXACT LLM PROMPT PAYLOAD")
         print("TOTAL MESSAGES:", len(body["messages"]))
         for i, m in enumerate(body["messages"]):
             print(f"--- Message {i} ({m.get('role')}) ---")
@@ -193,12 +193,12 @@ def create_llm_provider(provider: str,
     """Factory function to create LLM provider from config.
     
     Supports provider shortcuts:
-    - "openai" → base_url defaults to https://api.openai.com/v1
-    - "ohmygpt" → base_url defaults to https://api.ohmygpt.com/v1
-    - "deepseek" → base_url defaults to https://api.deepseek.com/v1
-    - "ollama" → base_url defaults to http://localhost:11434/v1
-    - "openai-compatible" → requires explicit base_url
-    - Any other → treated as openai-compatible with explicit base_url
+    - "openai" -> base_url defaults to https://api.openai.com/v1
+    - "ohmygpt" -> base_url defaults to https://api.ohmygpt.com/v1
+    - "deepseek" -> base_url defaults to https://api.deepseek.com/v1
+    - "ollama" -> base_url defaults to http://localhost:11434/v1
+    - "openai-compatible" -> requires explicit base_url
+    - Any other -> treated as openai-compatible with explicit base_url
     
     Args:
         provider: Provider name or shortcut
@@ -212,7 +212,7 @@ def create_llm_provider(provider: str,
     Returns:
         Configured OpenAICompatibleProvider
     """
-    # Provider → default base_url mapping
+    # Provider -> default base_url mapping
     default_urls = {
         "openai": "https://api.openai.com/v1",
         "ohmygpt": "https://api.ohmygpt.com/v1",
@@ -238,3 +238,4 @@ def create_llm_provider(provider: str,
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
     )
+

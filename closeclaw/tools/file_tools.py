@@ -1,11 +1,11 @@
-"""File operation tools."""
+﻿"""File operation tools."""
 
 import os
 import logging
 from typing import Any, Optional
 
 from .base import tool, BaseTool
-from ..types import Zone, ToolType
+from ..types import ToolType
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @tool(
     name="read_file",
     description="Read contents of a file",
-    zone=Zone.ZONE_A,
+    need_auth=False,
     tool_type=ToolType.FILE,
     parameters={
         "path": {
@@ -37,7 +37,7 @@ async def read_file_impl(path: str) -> str:
 @tool(
     name="write_memory_file",
     description="Save memory/notes to a file (for automatic memory flush). Auto-approved system tool.",
-    zone=Zone.ZONE_A,
+    need_auth=False,
     tool_type=ToolType.FILE,
     parameters={
         "path": {
@@ -59,17 +59,17 @@ async def write_memory_file_impl(path: str, content: str) -> str:
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         
-        logger.warning(f"[MEMORY_FLUSH] 💾 Wrote memory file: {path} ({len(content)} bytes)")
+        logger.warning(f"[MEMORY_FLUSH] Wrote memory file: {path} ({len(content)} bytes)")
         return f"Memory saved: {path}"
     except Exception as e:
-        logger.error(f"[MEMORY_FLUSH] ❌ Error writing memory file {path}: {e}")
+        logger.error(f"[MEMORY_FLUSH] Error writing memory file {path}: {e}")
         raise
 
 
 @tool(
     name="write_file",
     description="Write content to a file (overwrites if exists)",
-    zone=Zone.ZONE_C,
+    need_auth=True,
     tool_type=ToolType.FILE,
     parameters={
         "path": {
@@ -107,7 +107,7 @@ async def write_file_impl(path: str, content: str) -> str:
 @tool(
     name="append_file",
     description="Append content to a file",
-    zone=Zone.ZONE_C,
+    need_auth=True,
     tool_type=ToolType.FILE,
     parameters={
         "path": {
@@ -136,7 +136,7 @@ async def append_file_impl(path: str, content: str) -> str:
 @tool(
     name="delete_file",
     description="Delete a file",
-    zone=Zone.ZONE_C,
+    need_auth=True,
     tool_type=ToolType.FILE,
     parameters={
         "path": {
@@ -163,7 +163,7 @@ async def delete_file_impl(path: str) -> str:
 @tool(
     name="list_files",
     description="List immediate child directories and files in a directory",
-    zone=Zone.ZONE_A,
+    need_auth=False,
     tool_type=ToolType.FILE,
     parameters={
         "path": {
@@ -233,7 +233,7 @@ async def list_files_impl(path: str, recursive: bool = False) -> list[str]:
 @tool(
     name="file_exists",
     description="Check if file exists",
-    zone=Zone.ZONE_A,
+    need_auth=False,
     tool_type=ToolType.FILE,
     parameters={
         "path": {
@@ -252,7 +252,7 @@ async def file_exists_impl(path: str) -> bool:
 @tool(
     name="get_file_size",
     description="Get file size in bytes",
-    zone=Zone.ZONE_A,
+    need_auth=False,
     tool_type=ToolType.FILE,
     parameters={
         "path": {
@@ -273,3 +273,4 @@ async def get_file_size_impl(path: str) -> int:
     except Exception as e:
         logger.error(f"Error getting file size {path}: {e}")
         raise
+

@@ -1,8 +1,8 @@
-"""Test for message history trimming during compression (bugfix for re-accumulation issue)."""
+﻿"""Test for message history trimming during compression (bugfix for re-accumulation issue)."""
 
 import pytest
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from closeclaw.agents.core import AgentCore
 from closeclaw.types import Message, AgentConfig, ContextManagementSettings, LLMSettings
 from closeclaw.context import ContextManager, MessageCompactor
@@ -54,7 +54,7 @@ class TestCompressionHistoryTrimming:
         
         # Simulate adding many messages to reach compression threshold
         # Each message is ~50 tokens on average
-        for i in range(60):  # 60 messages × ~50 tokens = ~3000 tokens
+        for i in range(60):  # 60 messages 脳 ~50 tokens = ~3000 tokens
             user_msg = Message(
                 id=f"msg_{i}",
                 channel_type="test",
@@ -179,3 +179,8 @@ class TestCompressionHistoryTrimming:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+
+

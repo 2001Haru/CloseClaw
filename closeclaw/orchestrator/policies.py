@@ -1,4 +1,4 @@
-"""Planning and progress policies for Phase5 P1."""
+﻿"""Planning and progress policies for Phase5 P1."""
 
 from dataclasses import dataclass
 from typing import Optional
@@ -43,3 +43,4 @@ class PlanPolicy:
             )
 
         return None
+

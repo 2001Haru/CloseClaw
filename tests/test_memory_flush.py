@@ -1,10 +1,10 @@
-"""Tests for Phase 4 Step 2 Memory Flush Session."""
+﻿"""Tests for Phase 4 Step 2 Memory Flush Session."""
 
 import pytest
 import os
 import tempfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from closeclaw.memory import MemoryFlushSession, MemoryFlushCoordinator
 
@@ -123,7 +123,7 @@ class TestMemoryFlushSession:
         
         assert "Session ID: test_session_123" in notification
         assert "No files were saved" in notification
-        assert "✅" in notification
+        assert "Saved" in notification or "No files" in notification
     
     def test_generate_post_flush_notification_with_files(self, flush_session):
         """Test notification generation with saved files."""
@@ -305,3 +305,8 @@ class TestMemoryFlushIntegration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+
+

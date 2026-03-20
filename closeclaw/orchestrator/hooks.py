@@ -1,4 +1,4 @@
-"""Hook contracts and baseline hook implementations for Phase5 P2."""
+﻿"""Hook contracts and baseline hook implementations for Phase5 P2."""
 
 from typing import Protocol
 
@@ -33,3 +33,4 @@ class AfterObserveHook:
 
     def after_observe(self, state: RunState, action: Action, observation: Observation) -> None:
         return None
+

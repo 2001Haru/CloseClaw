@@ -1,4 +1,4 @@
-"""Context management module for Phase 4 Memory Upgrade.
+﻿"""Context management module for Phase 4 Memory Upgrade.
 
 Provides:
 - Token counting and monitoring
@@ -10,3 +10,4 @@ from .manager import ContextManager
 from .compaction import MessageCompactor
 
 __all__ = ["ContextManager", "MessageCompactor"]
+

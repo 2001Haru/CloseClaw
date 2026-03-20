@@ -1,12 +1,11 @@
-"""Multi-channel agent runner.
+﻿"""Multi-channel agent runner.
 
 Starts AgentCore with all enabled channels concurrently via asyncio.gather.
 Each channel gets its own AgentCore.run() loop, sharing the same AgentCore instance
 for state consistency.
 
 From Planning.md:
-  "本地 CLI 实现：嵌入式 CLI 驱动，与 Server 共享同一个 AgentCore 实例，
-   通过 asyncio.gather 同时启动 Server 和 CLI 循环。"
+  "鏈湴 CLI 瀹炵幇锛氬祵鍏ュ紡 CLI 椹卞姩锛屼笌 Server 鍏变韩鍚屼竴涓?AgentCore 瀹炰緥锛?   閫氳繃 asyncio.gather 鍚屾椂鍚姩 Server 鍜?CLI 寰幆銆?
 
 Usage:
     python -m closeclaw.runner --config config.yaml
@@ -21,12 +20,12 @@ from typing import Any, Optional
 from .config import ConfigLoader, CloseCrawlConfig, ChannelConfig
 from .agents import AgentCore
 from .agents.task_manager import TaskManager
-from .agents.llm_providers import create_llm_provider, OpenAICompatibleProvider
+from .agents.llm_providers import create_llm_provider
 from .channels import CLIChannel, get_telegram_channel, get_feishu_channel
 from .channels.base import BaseChannel
-from .middleware import MiddlewareChain, SafetyGuard, PathSandbox, ZoneBasedPermission
+from .middleware import MiddlewareChain, SafetyGuard, PathSandbox, AuthPermissionMiddleware
 from .tools.base import get_registered_tools
-from .types import Zone, AgentConfig, ContextManagementSettings, LLMSettings
+from .types import AgentConfig, ContextManagementSettings, LLMSettings
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +52,10 @@ def create_channel(ch_config: ChannelConfig,
         )
     
     elif channel_type == "telegram":
-        TelegramChannel = get_telegram_channel()
         token = ch_config.token
         if not token:
             raise ValueError("Telegram channel requires 'token' in config")
+        TelegramChannel = get_telegram_channel()
         return TelegramChannel(
             token=token,
             admin_user_ids=admin_ids,
@@ -175,8 +174,11 @@ def create_agent(config: CloseCrawlConfig,
     
     middleware_chain.add_middleware(PathSandbox(workspace_root=config.workspace_root))
     
-    auth_zones = [Zone(z) for z in config.safety.require_auth_for_zones]
-    middleware_chain.add_middleware(ZoneBasedPermission(require_auth_for_zones=auth_zones))
+    middleware_chain.add_middleware(
+        AuthPermissionMiddleware(
+            default_need_auth=config.safety.default_need_auth,
+        )
+    )
     
     agent.set_middleware_chain(middleware_chain)
     
@@ -343,3 +345,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

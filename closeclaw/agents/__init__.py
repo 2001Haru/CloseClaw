@@ -1,4 +1,4 @@
-"""Agent module."""
+﻿"""Agent module."""
 
 from .core import AgentCore, LLMProvider
 from .task_manager import TaskManager
@@ -12,3 +12,4 @@ __all__ = [
     "Agent", "AgentCore", "LLMProvider", "AgentConfig", "TaskManager",
     "OpenAICompatibleProvider", "create_llm_provider",
 ]
+

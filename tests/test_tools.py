@@ -1,11 +1,11 @@
-"""Tests for tools system."""
+﻿"""Tests for tools system."""
 
 import pytest
 import os
 from pathlib import Path
 
 from closeclaw.tools.base import get_registered_tools
-from closeclaw.types import ToolType, Zone
+from closeclaw.types import ToolType
 
 
 class TestFileTools:
@@ -26,7 +26,7 @@ class TestFileTools:
         tools = get_registered_tools()
         tool = next((t for t in tools if t.name == "read_file"), None)
         assert tool is not None
-        assert tool.zone == Zone.ZONE_A
+        assert tool.need_auth is False
         assert tool.type == ToolType.FILE
 
     @pytest.mark.asyncio
@@ -48,7 +48,7 @@ class TestFileTools:
         
         tools = get_registered_tools()
         tool = next((t for t in tools if t.name == "write_file"), None)
-        assert tool.zone == Zone.ZONE_C
+        assert tool.need_auth is True
 
     @pytest.mark.asyncio
     async def test_append_file_tool(self, temp_workspace):
@@ -76,7 +76,7 @@ class TestFileTools:
         
         tools = get_registered_tools()
         tool = next((t for t in tools if t.name == "delete_file"), None)
-        assert tool.zone == Zone.ZONE_C  # Delete is Zone C
+        assert tool.need_auth is True  # Delete is Sensitive
 
     @pytest.mark.asyncio
     async def test_list_directory_tool(self, temp_workspace):
@@ -136,7 +136,7 @@ class TestShellTools:
         tools = get_registered_tools()
         tool = next((t for t in tools if t.name == "shell"), None)
         assert tool is not None
-        assert tool.zone == Zone.ZONE_C
+        assert tool.need_auth is True
     
     @pytest.mark.asyncio
     async def test_shell_echo(self):
@@ -144,4 +144,8 @@ class TestShellTools:
         result = await shell_impl("echo test_output")
         assert result.get("executed") is True
         assert "test_output" in result.get("stdout", "")
+
+
+
+
 

@@ -1,11 +1,11 @@
-"""Tests for CLI commands (Phase 2)."""
+﻿"""Tests for CLI commands (Phase 2)."""
 
 import pytest
 import asyncio
 import json
 import tempfile
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 
 from closeclaw.cli import CLITaskManager
 from closeclaw.types import BackgroundTask, TaskStatus
@@ -53,7 +53,7 @@ class TestCLITaskManager:
         )
         task.status = TaskStatus.COMPLETED
         task.result = {"results": ["item1", "item2"]}
-        task.completed_at = datetime.utcnow()
+        task.completed_at = datetime.now(timezone.utc)
         
         # Add to manager
         cli_manager.task_manager.completed_results["#001"] = task
@@ -76,8 +76,8 @@ class TestCLITaskManager:
         )
         task.status = TaskStatus.COMPLETED
         task.result = {"count": 42}
-        task.started_at = datetime.utcnow() - timedelta(seconds=5)
-        task.completed_at = datetime.utcnow()
+        task.started_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+        task.completed_at = datetime.now(timezone.utc)
         
         cli_manager.task_manager.completed_results["#001"] = task
         
@@ -157,9 +157,9 @@ class TestCLITaskManager:
                     "tool_name": "web_search",
                     "tool_arguments": {"query": "test"},
                     "status": "completed",
-                    "created_at": datetime.utcnow().isoformat(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                     "started_at": None,
-                    "completed_at": datetime.utcnow().isoformat(),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
                     "result": {"count": 5},
                     "error": None,
                     "expires_after": 3600,
@@ -225,6 +225,17 @@ class TestCLIArgumentParsing:
         
         assert args.command == "summary"
 
+    def test_parser_mcp_health_command(self):
+        """Test: Parse 'mcp-health' command."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["mcp-health", "--config", "config.yaml", "--json"])
+
+        assert args.command == "mcp-health"
+        assert args.config == "config.yaml"
+        assert args.json is True
+
 
 class TestCLIIntegration:
     """Integration tests with real TaskManager."""
@@ -263,3 +274,8 @@ class TestCLIIntegration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+
+

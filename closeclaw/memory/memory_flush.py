@@ -1,4 +1,4 @@
-"""Memory Flush Session for Phase 4 Step 2.
+﻿"""Memory Flush Session for Phase 4 Step 2.
 
 Handles:
 - Detecting when context is about to be compressed
@@ -32,11 +32,11 @@ class MemoryFlushSession:
 
 Your context window is almost full and will be compressed momentarily. You MUST flush key memories to persistent storage so they aren't lost.
 
-🔴 CRITICAL PROCEDURE: READ BEFORE WRITE
+馃敶 CRITICAL PROCEDURE: READ BEFORE WRITE
 
 You must NOT blindly write new memory files if similar topics already exist.
 
-📋 REQUIRED STEPS:
+馃搵 REQUIRED STEPS:
 
 1. IDENTIFY: Determine the 1-3 core subjects discussed.
 2. SEARCH: Call `search_memory` for each subject to see if we already have memories about this.
@@ -178,15 +178,15 @@ Note: You can use tools multiple times. Keep going until all critical informatio
             Notification message for user
         """
         if not saved_files:
-            notification = f"""✅ **[System] Auto Memory Flush Completed**
-📋 Session ID: {flush_session_id}
-⚠️ No files were saved during this flush.
-🔄 Context will now be compressed to make room for new conversations.
+            notification = f"""鉁?**[System] Auto Memory Flush Completed**
+馃搵 Session ID: {flush_session_id}
+鈿狅笍 No files were saved during this flush.
+馃攧 Context will now be compressed to make room for new conversations.
 """
         else:
-            notification = f"""✅ **[System] Auto Memory Flush Completed**
-📋 Session ID: {flush_session_id}
-📁 Saved {len(saved_files)} memory file(s):
+            notification = f"""鉁?**[System] Auto Memory Flush Completed**
+馃搵 Session ID: {flush_session_id}
+馃搧 Saved {len(saved_files)} memory file(s):
 """
             
             for i, file_info in enumerate(saved_files[:3]):  # Show first 3
@@ -209,12 +209,12 @@ Note: You can use tools multiple times. Keep going until all critical informatio
             if len(saved_files) > 3:
                 notification += f"\n   ... and {len(saved_files) - 3} more files"
             
-            notification += f"\n\n🔗 View all: `ls memory/` or check workspace memory directory\n"
-            notification += f"🗑️ To remove: Delete files from workspace/memory/ directory\n"
+            notification += f"\n\n馃敆 View all: `ls memory/` or check workspace memory directory\n"
+            notification += f"馃棏锔?To remove: Delete files from workspace/memory/ directory\n"
         
         notification += f"""
-🔄 **Action**: Context is now being compressed. New conversation window is ready.
-⏱️ Timestamp: {datetime.now().isoformat()}"""
+馃攧 **Action**: Context is now being compressed. New conversation window is ready.
+鈴憋笍 Timestamp: {datetime.now().isoformat()}"""
         
         return notification
     
@@ -327,4 +327,5 @@ class MemoryFlushCoordinator:
     def clear_pending_flush(self) -> None:
         """Clear pending flush flag."""
         self.pending_flush = False
+
 

@@ -1,12 +1,12 @@
-"""Phase5 P1.5 integration tests for auth + visible response coordination."""
+﻿"""Phase5 P1.5 integration tests for auth + visible response coordination."""
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
 from closeclaw.agents.core import AgentCore
-from closeclaw.types import AgentConfig, AuthorizationResponse, Message, Session, Tool, ToolCall, ToolType, Zone
+from closeclaw.types import AgentConfig, AuthorizationResponse, Message, Session, Tool, ToolCall, ToolType
 
 
 class ReadThenWriteLLM:
@@ -140,7 +140,7 @@ class SelectiveAuthMiddleware:
 
     async def check_permission(self, tool, arguments, session, user_id):
         if tool.name == "write_file" and not arguments.get("_force_execute"):
-            auth_id = f"auth_{int(datetime.utcnow().timestamp() * 1000)}"
+            auth_id = f"auth_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
             return {
                 "status": "requires_auth",
                 "auth_request_id": auth_id,
@@ -192,7 +192,7 @@ def phase5_agent(temp_workspace):
         description="Read file",
         handler=read_handler,
         type=ToolType.FILE,
-        zone=Zone.ZONE_A,
+        need_auth=False,
         parameters={"path": {"type": "string"}},
     ))
     agent.register_tool(Tool(
@@ -200,7 +200,7 @@ def phase5_agent(temp_workspace):
         description="Write file",
         handler=write_handler,
         type=ToolType.FILE,
-        zone=Zone.ZONE_C,
+        need_auth=True,
         parameters={
             "path": {"type": "string"},
             "content": {"type": "string"},
@@ -241,7 +241,7 @@ def phase5_agent_stepwise(temp_workspace):
         description="Read file",
         handler=read_handler,
         type=ToolType.FILE,
-        zone=Zone.ZONE_A,
+        need_auth=False,
         parameters={"path": {"type": "string"}},
     ))
     agent.register_tool(Tool(
@@ -249,7 +249,7 @@ def phase5_agent_stepwise(temp_workspace):
         description="Write file",
         handler=write_handler,
         type=ToolType.FILE,
-        zone=Zone.ZONE_C,
+        need_auth=True,
         parameters={
             "path": {"type": "string"},
             "content": {"type": "string"},
@@ -290,7 +290,7 @@ def phase5_agent_context_aware(temp_workspace):
         description="Read file",
         handler=read_handler,
         type=ToolType.FILE,
-        zone=Zone.ZONE_A,
+        need_auth=False,
         parameters={"path": {"type": "string"}},
     ))
     agent.register_tool(Tool(
@@ -298,7 +298,7 @@ def phase5_agent_context_aware(temp_workspace):
         description="Write file",
         handler=write_handler,
         type=ToolType.FILE,
-        zone=Zone.ZONE_C,
+        need_auth=True,
         parameters={
             "path": {"type": "string"},
             "content": {"type": "string"},
@@ -336,7 +336,7 @@ def phase5_agent_auth_context_synthesis(temp_workspace):
         description="Write file",
         handler=write_handler,
         type=ToolType.FILE,
-        zone=Zone.ZONE_C,
+        need_auth=True,
         parameters={
             "path": {"type": "string"},
             "content": {"type": "string"},
@@ -355,7 +355,7 @@ async def test_phase5_read_then_write_requires_auth_same_turn(phase5_agent):
         sender_id="cli_user",
         sender_name="User",
         content="First read poet.txt, then write ABCDEF into it.",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     )
 
     result = await phase5_agent.process_message(message)
@@ -376,7 +376,7 @@ async def test_phase5_stepwise_read_then_write_requires_auth_same_turn(phase5_ag
         sender_id="cli_user",
         sender_name="User",
         content="First read poet.txt, then write ABCDEF into it.",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     )
 
     result = await phase5_agent_stepwise.process_message(message)
@@ -397,7 +397,7 @@ async def test_phase5_no_repeated_read_when_tool_result_visible(phase5_agent_con
         sender_id="cli_user",
         sender_name="User",
         content="First read poet.txt, then write GOOD into it",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     )
 
     result = await phase5_agent_context_aware.process_message(message)
@@ -418,7 +418,7 @@ async def test_phase5_synthesis_prompt_uses_full_context_after_auth(phase5_agent
         sender_id="cli_user",
         sender_name="User",
         content="Add another sentence \"I'm GOOD!\" to closeclaw_intro.txt.",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     )
 
     first = await phase5_agent_auth_context_synthesis.process_message(message)
@@ -444,7 +444,7 @@ async def test_phase5_auth_request_keeps_visible_assistant_message(phase5_agent)
         sender_id="cli_user",
         sender_name="User",
         content="Read then write poet.txt",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     )
 
     result = await phase5_agent.process_message(message)
@@ -463,7 +463,7 @@ async def test_phase5_auth_approve_auto_finalize(phase5_agent):
         sender_id="cli_user",
         sender_name="User",
         content="Read then write poet.txt",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     ))
 
     outputs = []
@@ -503,3 +503,8 @@ async def test_phase5_auth_approve_auto_finalize(phase5_agent):
     assert any("completed" in (o.get("response") or "").lower() for o in assistant_msgs), (
         "Expected auto-finalized response after approval"
     )
+
+
+
+
+

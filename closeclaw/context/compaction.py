@@ -1,4 +1,4 @@
-"""Message compaction and summarization for context management."""
+﻿"""Message compaction and summarization for context management."""
 
 import logging
 from typing import Optional, List, Tuple
@@ -188,3 +188,4 @@ class MessageCompactor:
                 "chunk_size": self.chunk_size
             }
         }
+

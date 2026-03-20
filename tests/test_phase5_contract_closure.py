@@ -1,12 +1,12 @@
-"""Phase5 closure tests: public interfaces and output contract consistency."""
+﻿"""Phase5 closure tests: public interfaces and output contract consistency."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
 import closeclaw.orchestrator as orchestrator
 from closeclaw.agents.core import AgentCore
-from closeclaw.types import AgentConfig, Message, Session, Tool, ToolCall, ToolType, Zone
+from closeclaw.types import AgentConfig, Message, Session, Tool, ToolCall, ToolType
 
 
 REQUIRED_OUTPUT_KEYS = {
@@ -70,7 +70,7 @@ async def test_phase5_output_contract_success_path(temp_workspace):
         sender_id="u1",
         sender_name="User",
         content="say hi",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     ))
 
     assert REQUIRED_OUTPUT_KEYS.issubset(output.keys())
@@ -109,7 +109,7 @@ async def test_phase5_output_contract_no_progress_path(temp_workspace):
         description="Always fails",
         handler=failing_handler,
         type=ToolType.FILE,
-        zone=Zone.ZONE_A,
+        need_auth=False,
         parameters={},
     ))
 
@@ -119,7 +119,7 @@ async def test_phase5_output_contract_no_progress_path(temp_workspace):
         sender_id="u1",
         sender_name="User",
         content="run failing chain",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     ))
 
     assert REQUIRED_OUTPUT_KEYS.issubset(output.keys())
@@ -168,7 +168,7 @@ async def test_phase5_output_contract_auth_required_path(temp_workspace):
         description="Write file",
         handler=write_handler,
         type=ToolType.FILE,
-        zone=Zone.ZONE_C,
+        need_auth=True,
         parameters={"path": {"type": "string"}, "content": {"type": "string"}},
     ))
     agent.set_middleware_chain(AuthMiddleware())
@@ -179,9 +179,14 @@ async def test_phase5_output_contract_auth_required_path(temp_workspace):
         sender_id="u1",
         sender_name="User",
         content="please write",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     ))
 
     assert REQUIRED_OUTPUT_KEYS.issubset(output.keys())
     assert output["requires_auth"] is True
     assert output.get("auth_request_id") == "auth_1"
+
+
+
+
+

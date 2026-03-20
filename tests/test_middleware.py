@@ -1,12 +1,12 @@
-"""Tests for middleware system."""
+﻿"""Tests for middleware system."""
 
 import pytest
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-from closeclaw.types import Zone, ToolType, Tool, Session
-from closeclaw.middleware import SafetyGuard, PathSandbox, ZoneBasedPermission, MiddlewareChain
+from closeclaw.types import ToolType, Tool, Session
+from closeclaw.middleware import SafetyGuard, PathSandbox, AuthPermissionMiddleware, MiddlewareChain
 
 
 class TestSafetyGuard:
@@ -19,7 +19,7 @@ class TestSafetyGuard:
         tool = Tool(
             name="ls",
             description="List files",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.SHELL
         )
         
@@ -38,7 +38,7 @@ class TestSafetyGuard:
         tool = Tool(
             name="del",
             description="Delete files",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.SHELL
         )
         
@@ -58,7 +58,7 @@ class TestSafetyGuard:
         tool = Tool(
             name="rm",
             description="Delete files",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.SHELL
         )
         
@@ -77,7 +77,7 @@ class TestSafetyGuard:
         tool = Tool(
             name="rm",
             description="Delete files",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.SHELL
         )
         
@@ -96,7 +96,7 @@ class TestSafetyGuard:
         tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -115,7 +115,7 @@ class TestSafetyGuard:
         tool = Tool(
             name="psql",
             description="PostgreSQL command",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.SHELL
         )
         
@@ -138,7 +138,7 @@ class TestPathSandbox:
         tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -160,7 +160,7 @@ class TestPathSandbox:
         tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.FILE
         )
         
@@ -181,7 +181,7 @@ class TestPathSandbox:
         tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -210,7 +210,7 @@ class TestPathSandbox:
         tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -224,17 +224,17 @@ class TestPathSandbox:
         assert result["status"] == "block"
 
 
-class TestZoneBasedPermission:
-    """Test ZoneBasedPermission middleware."""
+class TestAuthPermissionMiddleware:
+    """Test AuthPermissionMiddleware middleware."""
     
     @pytest.mark.asyncio
-    async def test_zone_a_auto_approve(self, sample_session):
-        """Test Zone A operations are auto-approved."""
-        perms = ZoneBasedPermission(admin_user_id="admin_001")
+    async def test_non_sensitive_auto_approve(self, sample_session):
+        """Test Safe operations are auto-approved."""
+        perms = AuthPermissionMiddleware()
         tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -247,13 +247,13 @@ class TestZoneBasedPermission:
         assert result["status"] == "allow"
     
     @pytest.mark.asyncio
-    async def test_zone_b_silent_log(self, sample_session):
-        """Test Zone B operations are logged silently."""
-        perms = ZoneBasedPermission(admin_user_id="admin_001")
+    async def test_non_sensitive_silent_log(self, sample_session):
+        """Test Non-sensitive operations are logged silently."""
+        perms = AuthPermissionMiddleware()
         tool = Tool(
             name="log_event",
             description="Log event",
-            zone=Zone.ZONE_B,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -266,13 +266,13 @@ class TestZoneBasedPermission:
         assert result["status"] == "allow"
     
     @pytest.mark.asyncio
-    async def test_zone_c_require_auth(self, sample_session):
-        """Test Zone C operations require authorization."""
-        perms = ZoneBasedPermission(admin_user_id="admin_001")
+    async def test_sensitive_requires_auth(self, sample_session):
+        """Test Sensitive operations require authorization."""
+        perms = AuthPermissionMiddleware()
         tool = Tool(
             name="delete_file",
             description="Delete file",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.FILE
         )
         
@@ -288,11 +288,11 @@ class TestZoneBasedPermission:
     @pytest.mark.asyncio
     async def test_auth_request_structure(self, sample_session):
         """Test auth request has proper structure."""
-        perms = ZoneBasedPermission(admin_user_id="admin_001")
+        perms = AuthPermissionMiddleware()
         tool = Tool(
             name="delete_file",
             description="Delete file",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.FILE
         )
         
@@ -318,14 +318,14 @@ class TestMiddlewareChain:
         middlewares = [
             SafetyGuard(),
             PathSandbox(temp_workspace),
-            ZoneBasedPermission()
+            AuthPermissionMiddleware()
         ]
         chain = MiddlewareChain(middlewares)
         
         tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -352,7 +352,7 @@ class TestMiddlewareChain:
         tool = Tool(
             name="shell",
             description="Shell command",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.SHELL
         )
         
@@ -371,14 +371,14 @@ class TestMiddlewareChain:
         middlewares = [
             SafetyGuard(),
             PathSandbox(temp_workspace),
-            ZoneBasedPermission()
+            AuthPermissionMiddleware()
         ]
         chain = MiddlewareChain(middlewares)
         
         tool = Tool(
             name="delete_file",
             description="Delete file",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.FILE
         )
         
@@ -404,7 +404,7 @@ class TestMiddlewareIntegration:
         middlewares = [
             SafetyGuard(),
             PathSandbox(temp_workspace),
-            ZoneBasedPermission()
+            AuthPermissionMiddleware()
         ]
         chain = MiddlewareChain(middlewares)
         
@@ -417,7 +417,7 @@ class TestMiddlewareIntegration:
         tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -435,7 +435,7 @@ class TestMiddlewareIntegration:
         middlewares = [
             SafetyGuard(),
             PathSandbox(temp_workspace),
-            ZoneBasedPermission(admin_user_id="admin_001")
+            AuthPermissionMiddleware()
         ]
         chain = MiddlewareChain(middlewares)
         
@@ -446,7 +446,7 @@ class TestMiddlewareIntegration:
         tool = Tool(
             name="delete_file",
             description="Delete file",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.FILE
         )
         
@@ -459,3 +459,8 @@ class TestMiddlewareIntegration:
         # Should require auth
         assert result["status"] == "requires_auth"
         assert "auth_request" in result
+
+
+
+
+

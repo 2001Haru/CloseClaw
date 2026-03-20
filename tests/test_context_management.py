@@ -1,4 +1,4 @@
-"""Tests for Phase 4 Context Management."""
+﻿"""Tests for Phase 4 Context Management."""
 
 import pytest
 from closeclaw.context import ContextManager, MessageCompactor
@@ -315,3 +315,7 @@ class TestContextIntegration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+

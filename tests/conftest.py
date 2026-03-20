@@ -1,13 +1,13 @@
-"""Pytest configuration and shared fixtures."""
+﻿"""Pytest configuration and shared fixtures."""
 
 import os
 import tempfile
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from closeclaw.types import (
-    Zone, AgentState, ToolType, OperationType,
+    AgentState, ToolType, OperationType,
     Tool, Session, Agent, AgentConfig,
     Message, ToolCall, ToolResult
 )
@@ -27,7 +27,7 @@ def sample_tool_file() -> Tool:
     return Tool(
         name="read_file",
         description="Read file contents",
-        zone=Zone.ZONE_A,
+        need_auth=False,
         type=ToolType.FILE,
         parameters={"path": {"type": "string"}},
     )
@@ -39,7 +39,7 @@ def sample_tool_shell() -> Tool:
     return Tool(
         name="execute_shell",
         description="Execute shell command",
-        zone=Zone.ZONE_C,
+        need_auth=True,
         type=ToolType.SHELL,
         parameters={"command": {"type": "string"}},
     )
@@ -51,7 +51,7 @@ def sample_tool_websearch() -> Tool:
     return Tool(
         name="web_search",
         description="Search the web",
-        zone=Zone.ZONE_A,
+        need_auth=False,
         type=ToolType.WEBSEARCH,
         parameters={"query": {"type": "string"}},
     )
@@ -64,8 +64,8 @@ def sample_session() -> Session:
         session_id="test_session_123",
         user_id="user_456",
         channel_type="cli",
-        created_at=datetime.utcnow(),
-        last_activity=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        last_activity=datetime.now(timezone.utc),
     )
 
 
@@ -89,7 +89,7 @@ def sample_agent(sample_agent_config, sample_tool_file, sample_tool_shell) -> Ag
         config=sample_agent_config,
         state=AgentState.IDLE,
         tools=[sample_tool_file, sample_tool_shell],
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
 
 
@@ -102,7 +102,7 @@ def sample_message() -> Message:
         sender_id="user_123",
         sender_name="User",
         content="Hello, please read the file at /data/test.txt",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     )
 
 
@@ -176,3 +176,8 @@ def reset_logging():
     for handler in logging.root.handlers[:]:
         logging.root.removeHandler(handler)
     yield
+
+
+
+
+

@@ -1,11 +1,11 @@
-"""Feishu (Lark) channel - Integration via httpx + Feishu Open Platform REST API.
+﻿"""Feishu (Lark) channel - Integration via httpx + Feishu Open Platform REST API.
 
 Uses httpx for lightweight, direct API calls instead of heavy SDK.
 Implements event subscription via webhook for message reception and
-Interactive Cards for HITL (Human-in-the-Loop) Zone C confirmations.
+Interactive Cards for HITL (Human-in-the-Loop) sensitive operation confirmations.
 
 From Planning.md:
-  "保留 Feishu（国内协同）"
+    "Retain Feishu (domestic collaboration)"
 """
 
 import asyncio
@@ -33,7 +33,7 @@ class FeishuChannel(BaseChannel):
     
     Features:
     - Webhook event subscription for message reception
-    - Interactive Card for HITL confirmation (Zone C)
+    - Interactive Card for HITL confirmation (need_auth tools)
     - Auto-refreshing tenant_access_token
     - Admin user verification for auth approvals
     
@@ -67,7 +67,7 @@ class FeishuChannel(BaseChannel):
         Args:
             app_id: Feishu app ID
             app_secret: Feishu app secret
-            admin_user_ids: User IDs permitted to approve Zone C operations
+            admin_user_ids: User IDs permitted to approve sensitive operations
             verification_token: Webhook verification token
             webhook_port: Port for webhook HTTP server
             config: Additional configuration
@@ -86,7 +86,7 @@ class FeishuChannel(BaseChannel):
         self._tenant_access_token: Optional[str] = None
         self._token_expires_at: float = 0
         
-        # Message queue: feishu events → agent processing
+        # Message queue: feishu events -> agent processing
         self._message_queue: asyncio.Queue[Optional[Message]] = asyncio.Queue()
         
         # Auth response futures
@@ -159,9 +159,9 @@ class FeishuChannel(BaseChannel):
             result = response.get("result", "")
             error = response.get("error")
             
-            text = f"📬 Task Completed\nTask: {task_id} | Status: {status}"
+            text = f"Task Completed\nTask: {task_id} | Status: {status}"
             if error:
-                text += f"\n❌ Error: {error}"
+                text += f"\nError: {error}"
             elif result:
                 text += f"\nResult: {str(result)[:500]}"
             
@@ -169,7 +169,7 @@ class FeishuChannel(BaseChannel):
         
         elif resp_type == "error":
             error = response.get("error", "Unknown error")
-            await self._send_text_message(chat_id, f"❌ Error: {error}")
+            await self._send_text_message(chat_id, f"Error: {error}")
     
     async def send_auth_request(self,
                                 auth_request_id: str,
@@ -177,7 +177,7 @@ class FeishuChannel(BaseChannel):
                                 description: str,
                                 diff_preview: Optional[str] = None) -> None:
         """Send HITL confirmation via Feishu Interactive Card."""
-        pass  # Implemented via send_response → _send_auth_card
+        pass  # Implemented via send_response -> _send_auth_card
     
     async def wait_for_auth_response(self,
                                       auth_request_id: str,
@@ -256,7 +256,7 @@ class FeishuChannel(BaseChannel):
         card = {
             "config": {"wide_screen_mode": True},
             "header": {
-                "title": {"tag": "plain_text", "content": "⚠️ Zone C — Authorization Required"},
+                "title": {"tag": "plain_text", "content": "Sensitive Operation - Authorization Required"},
                 "template": "orange",
             },
             "elements": [
@@ -286,13 +286,13 @@ class FeishuChannel(BaseChannel):
             "actions": [
                 {
                     "tag": "button",
-                    "text": {"tag": "plain_text", "content": "✅ Approve"},
+                    "text": {"tag": "plain_text", "content": "Approve"},
                     "type": "primary",
                     "value": {"action": "approve", "auth_request_id": auth_request_id},
                 },
                 {
                     "tag": "button",
-                    "text": {"tag": "plain_text", "content": "❌ Reject"},
+                    "text": {"tag": "plain_text", "content": "Reject"},
                     "type": "danger",
                     "value": {"action": "reject", "auth_request_id": auth_request_id},
                 },
@@ -471,4 +471,6 @@ class FeishuChannel(BaseChannel):
         if future and not future.done():
             future.set_result(auth_response)
         
-        logger.info(f"Feishu auth response: {auth_request_id} → {'approved' if approved else 'rejected'}")
+        logger.info(f"Feishu auth response: {auth_request_id} -> {'approved' if approved else 'rejected'}")
+
+

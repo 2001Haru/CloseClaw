@@ -1,4 +1,4 @@
-"""Configuration system for CloseClaw."""
+﻿"""Configuration system for CloseClaw."""
 
 import os
 import logging
@@ -55,20 +55,28 @@ class ChannelConfig:
 class SafetyConfig:
     """Safety and permission configuration."""
     admin_user_ids: list[str] = field(default_factory=list)
-    require_auth_for_zones: list[str] = field(default_factory=lambda: ["C"])
+    # Backward-compatible alias for older tests/configs.
+    enable_hitl: bool = True
+    default_need_auth: bool = False
     command_blacklist_enabled: bool = True
     custom_blacklist_rules: list[str] = field(default_factory=list)
+    # Backward-compatible alias for older tests/configs.
+    enable_audit_log: bool = True
     audit_log_enabled: bool = True
     audit_log_path: str = "audit.log"
+    audit_log_retention_days: int = 90
     
     def to_dict(self) -> dict[str, Any]:
         return {
             "admin_user_ids": self.admin_user_ids,
-            "require_auth_for_zones": self.require_auth_for_zones,
+            "enable_hitl": self.enable_hitl,
+            "default_need_auth": self.default_need_auth,
             "command_blacklist_enabled": self.command_blacklist_enabled,
             "custom_blacklist_rules": self.custom_blacklist_rules,
+            "enable_audit_log": self.enable_audit_log,
             "audit_log_enabled": self.audit_log_enabled,
             "audit_log_path": self.audit_log_path,
+            "audit_log_retention_days": self.audit_log_retention_days,
         }
 
 
@@ -145,9 +153,9 @@ class Phase5Config:
 @dataclass
 class CloseCrawlConfig:
     """Main CloseClaw configuration."""
-    agent_id: str
-    workspace_root: str
-    llm: LLMConfig
+    agent_id: str = "closeclaw-agent"
+    workspace_root: str = "."
+    llm: LLMConfig = field(default_factory=lambda: LLMConfig(provider="openai", model="gpt-4"))
     channels: list[ChannelConfig] = field(default_factory=list)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     max_iterations: int = 10
@@ -181,6 +189,24 @@ class CloseCrawlConfig:
 
 class ConfigLoader:
     """Load and validate configuration from YAML."""
+
+    @staticmethod
+    def _resolve_workspace_root(raw_config: dict[str, Any], config_path: Optional[str] = None) -> str:
+        """Resolve workspace_root with deterministic precedence.
+
+        Precedence:
+        1) Explicit config.workspace_root
+        2) WORKSPACE_ROOT env var
+        3) Directory of config file (safer than process cwd)
+        """
+        workspace_root = raw_config.get("workspace_root") or os.environ.get("WORKSPACE_ROOT")
+        if workspace_root:
+            return os.path.abspath(workspace_root)
+
+        if config_path:
+            return os.path.abspath(os.path.dirname(config_path))
+
+        return os.path.abspath(os.getcwd())
     
     @staticmethod
     def load(config_path: str) -> CloseCrawlConfig:
@@ -199,15 +225,18 @@ class ConfigLoader:
         
         with open(config_path, "r", encoding="utf-8") as f:
             raw_config = yaml.safe_load(f)
+
+        if raw_config is None:
+            raw_config = {}
         
         # Replace environment variable placeholders
         raw_config = ConfigLoader._replace_env_vars(raw_config)
         
         # Validate required fields
-        ConfigLoader._validate_config(raw_config)
+        ConfigLoader._validate_config(raw_config, config_path=config_path)
         
         # Build config objects
-        config = ConfigLoader._build_config(raw_config)
+        config = ConfigLoader._build_config(raw_config, config_path=config_path)
         
         logger.info(f"Configuration loaded: agent_id={config.agent_id}")
         return config
@@ -229,17 +258,19 @@ class ConfigLoader:
         return yaml.safe_load(config_str)
     
     @staticmethod
-    def _validate_config(raw_config: dict[str, Any]) -> None:
+    def _validate_config(raw_config: dict[str, Any], config_path: Optional[str] = None) -> None:
         """Validate required configuration fields."""
-        required_fields = ["agent_id", "workspace_root", "llm"]
+        required_fields = ["llm"]
         for field in required_fields:
             if field not in raw_config:
                 raise ValueError(f"Missing required config field: {field}")
-        
-        # Validate workspace_root exists
-        workspace = raw_config.get("workspace_root")
-        if not os.path.exists(workspace):
-            raise ValueError(f"workspace_root does not exist: {workspace}")
+
+        # Keep backward compatibility: only hard-fail when workspace_root is
+        # explicitly provided in config.
+        if "workspace_root" in raw_config:
+            workspace = ConfigLoader._resolve_workspace_root(raw_config, config_path=config_path)
+            if not os.path.exists(workspace):
+                raise ValueError(f"workspace_root does not exist: {workspace}")
         
         # Validate LLM config
         llm = raw_config.get("llm", {})
@@ -247,7 +278,7 @@ class ConfigLoader:
             raise ValueError("LLM config must have 'provider' and 'model'")
     
     @staticmethod
-    def _build_config(raw_config: dict[str, Any]) -> CloseCrawlConfig:
+    def _build_config(raw_config: dict[str, Any], config_path: Optional[str] = None) -> CloseCrawlConfig:
         """Build CloseCrawlConfig from raw YAML."""
         
         # LLM config
@@ -264,7 +295,13 @@ class ConfigLoader:
         
         # Channels
         channels = []
-        for ch_raw in raw_config.get("channels", []):
+        channels_raw = raw_config.get("channels", [])
+        if isinstance(channels_raw, dict):
+            channels_iter = channels_raw.values()
+        else:
+            channels_iter = channels_raw
+
+        for ch_raw in channels_iter:
             channel = ChannelConfig(
                 type=ch_raw["type"],
                 enabled=ch_raw.get("enabled", True),
@@ -276,13 +313,25 @@ class ConfigLoader:
         
         # Safety config
         safety_raw = raw_config.get("safety", {})
+        enable_hitl = safety_raw.get("enable_hitl")
+        if enable_hitl is None:
+            default_need_auth = bool(safety_raw.get("default_need_auth", False))
+            enable_hitl = True
+        else:
+            default_need_auth = bool(safety_raw.get("default_need_auth", enable_hitl))
+
+        enable_audit_log = bool(safety_raw.get("enable_audit_log", safety_raw.get("audit_log_enabled", True)))
+
         safety = SafetyConfig(
             admin_user_ids=safety_raw.get("admin_user_ids", []),
-            require_auth_for_zones=safety_raw.get("require_auth_for_zones", ["C"]),
+            enable_hitl=bool(enable_hitl),
+            default_need_auth=default_need_auth,
             command_blacklist_enabled=safety_raw.get("command_blacklist_enabled", True),
             custom_blacklist_rules=safety_raw.get("custom_blacklist_rules", []),
-            audit_log_enabled=safety_raw.get("audit_log_enabled", True),
+            enable_audit_log=enable_audit_log,
+            audit_log_enabled=enable_audit_log,
             audit_log_path=safety_raw.get("audit_log_path", "audit.log"),
+            audit_log_retention_days=safety_raw.get("audit_log_retention_days", 90),
         )
         
         # Context management config (Phase 4)
@@ -329,14 +378,17 @@ class ConfigLoader:
         )
         
         # Main config
+        agent_raw = raw_config.get("agent", {})
+        resolved_workspace_root = ConfigLoader._resolve_workspace_root(raw_config, config_path=config_path)
+
         config = CloseCrawlConfig(
-            agent_id=raw_config["agent_id"],
-            workspace_root=raw_config["workspace_root"],
+            agent_id=raw_config.get("agent_id", agent_raw.get("id", "closeclaw-agent")),
+            workspace_root=resolved_workspace_root,
             llm=llm,
             channels=channels,
             safety=safety,
-            max_iterations=raw_config.get("max_iterations", 10),
-            timeout_seconds=raw_config.get("timeout_seconds", 300),
+            max_iterations=raw_config.get("max_iterations", agent_raw.get("max_iterations", 10)),
+            timeout_seconds=raw_config.get("timeout_seconds", agent_raw.get("timeout_seconds", 300)),
             system_prompt=raw_config.get("system_prompt"),
             max_context_tokens=context_management.max_tokens,
             log_level=raw_config.get("log_level", "INFO"),
@@ -386,13 +438,12 @@ channels:
 
 # Safety and permission controls
 safety:
-  # User IDs permitted to approve Zone C operations
+    # User IDs permitted to approve sensitive operations
   admin_user_ids:
     - "user_id_here"
-  
-  # Which zones require authorization [A, B, C]
-  require_auth_for_zones:
-    - "C"
+
+    # New model: whether tools require authorization by default
+    default_need_auth: false
   
   # Enable command blacklist for shell operations
   command_blacklist_enabled: true
@@ -430,3 +481,5 @@ interaction_log_file: "interaction.md"
             logger.info(f"Example config created at {output_path}")
         except Exception as e:
             logger.error(f"Failed to create example config: {e}")
+
+

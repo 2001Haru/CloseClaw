@@ -1,12 +1,12 @@
-"""P3-A tests for progress policy and no-progress stop behavior."""
+﻿"""P3-A tests for progress policy and no-progress stop behavior."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
 from closeclaw.agents.core import AgentCore
 from closeclaw.orchestrator.progress import assess_progress
-from closeclaw.types import AgentConfig, Message, Session, Tool, ToolCall, ToolType, Zone
+from closeclaw.types import AgentConfig, Message, Session, Tool, ToolCall, ToolType
 
 
 def test_assess_progress_replan_threshold():
@@ -56,7 +56,7 @@ async def test_agent_stops_on_no_progress_limit(temp_workspace):
         description="Always fails",
         handler=failing_handler,
         type=ToolType.FILE,
-        zone=Zone.ZONE_A,
+        need_auth=False,
         parameters={},
     ))
 
@@ -66,7 +66,7 @@ async def test_agent_stops_on_no_progress_limit(temp_workspace):
         sender_id="u1",
         sender_name="User",
         content="run failing chain",
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
     ))
 
     assert result["decision"] == "no_progress_limit_reached"
@@ -80,3 +80,8 @@ async def test_agent_stops_on_no_progress_limit(temp_workspace):
     assert isinstance(payload.get("done_criteria"), list)
     assert isinstance(payload.get("risk"), list)
     assert isinstance(payload.get("todo_snapshot"), list)
+
+
+
+
+

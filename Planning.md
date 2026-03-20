@@ -21,6 +21,8 @@
 6. [PHASE4_STEP2_COMPLETION.md](PHASE4_STEP2_COMPLETION.md)
 7. [PHASE4_STEP3_COMPLETION.md](PHASE4_STEP3_COMPLETION.md)
 8. [Phase5_Complex_Task_Upgrade_Plan.md](Phase5_Complex_Task_Upgrade_Plan.md)
+9. Phase 6（Heartbeat + Cron 机制建设，本文新增）
+10. [Phase6_Heartbeat_Upgrade_Plan.md](Phase6_Heartbeat_Upgrade_Plan.md)
 
 ### 已完成
 
@@ -40,6 +42,10 @@
 - [ ] **Phase 5 P2 Guard/Hook 融合**：flush/compact/recall 触发点单一化尚未完成。
 - [ ] **Phase 5 P3 复杂任务增强**：progress/no-progress、重规划与结构化 plan_update 尚未完成。
 - [ ] **Phase 5 灰度发布与回滚演练**：feature flag 灰度、回滚脚本与发布门禁未完成。
+
+### 规划中（下一阶段）
+
+- [ ] **Phase 6 Heartbeat + Cron 机制**：建立周期任务与显式定时任务的统一治理面，包括门禁策略、路由稳定性、可观测性与运维触发能力。
 
 ### 结论
 
@@ -142,6 +148,71 @@
   - 将 flush/compact/recall 归并到 Guard/Hook，消除多点触发。
   - 通过 feature flag 进行会话级灰度发布，提供可回滚机制。
   - 以 [Phase5_Complex_Task_Upgrade_Plan.md](Phase5_Complex_Task_Upgrade_Plan.md) 为实施基线。
+
+6. **Phase 6: Heartbeat 与 Cron 机制建设**（约 1-2 周）
+  - 详细实施文档： [Phase6_Heartbeat_Upgrade_Plan.md](Phase6_Heartbeat_Upgrade_Plan.md)
+  - 建设目标：在不引入双路径复杂度的前提下，补齐“周期扫描任务（Heartbeat）+ 显式定时任务（Cron）”的生产级治理能力。
+  - 设计原则：
+    - 单路径执行：Heartbeat 与 Cron 统一复用现有 Agent 主链路执行与外发路径。
+    - 责任清晰：Cron 负责显式时间表达，Heartbeat 负责任务池轮询与决策。
+    - 轻量优先：优先增加门禁与可观测能力，避免过早引入复杂调度框架。
+
+  - **P6-1 可观测性与事件化（低风险）**
+    - 新增 Heartbeat 结构化事件：tick_started、tick_skipped(reason)、tick_run_started、tick_run_finished(status, duration_ms)。
+    - 增加最小统计面：近 N 次运行成功率、平均耗时、skip 原因分布。
+    - 验收：
+      - 能在日志中稳定输出结构化字段（run_id/session_id/channel/target/reason）。
+      - 出错场景不影响下一轮 tick。
+
+  - **P6-2 防扰门禁（低风险）**
+    - 新增 quiet hours（或 active hours）配置；命中静默窗口直接 skip 并记录原因。
+    - 新增队列繁忙门禁（可选）：主队列拥堵时 heartbeat 跳过本轮。
+    - 验收：
+      - 配置开启后行为可预测，且 skip 原因可观测。
+      - 关闭配置时保持当前默认行为不变。
+
+  - **P6-3 路由稳定性增强（中风险）**
+    - 在“最近会话优先”基础上增加 target TTL（最近目标在 TTL 内固定）。
+    - 超过 TTL 再重新选择目标，降低频繁漂移与误投递风险。
+    - 验收：
+      - TTL 窗口内目标稳定。
+      - TTL 过期后可恢复自动路由。
+
+  - **P6-4 运维与联调入口（低风险）**
+    - 增加 heartbeat trigger 命令，显式触发一次决策与执行。
+    - 返回 action/tasks/执行摘要，便于联调与故障排查。
+    - 验收：
+      - 命令可在不破坏定时 loop 的前提下安全触发。
+      - skip/run 路径均可复现并输出摘要。
+
+  - **P6-5 文档与模板收口（低风险）**
+    - 更新 HEARTBEAT 模板规范：触发条件、执行动作、输出要求、失败重试建议。
+    - 更新 README 边界说明：业务 heartbeat 与通道协议 heartbeat 的职责区别。
+    - 验收：
+      - 模板与实现一致。
+      - 新用户可根据模板稳定写出可执行 heartbeat 任务。
+
+  - **Phase 6 回归门禁（必须）**
+    - Heartbeat:
+      - start 幂等
+      - 无工具调用默认 skip
+      - transient error 重试后可恢复
+      - trigger_now 路径正确
+      - quiet hours 与 queue-busy 门禁测试
+      - target TTL 路由测试
+    - Cron:
+      - 时区合法性校验
+      - 运行中外部 disable 可生效
+      - 递归防护（cron 内禁止 add）
+    - 协同:
+      - Heartbeat 与 Cron 并行运行互不阻塞
+      - 两者均可通过统一外发路径投递消息
+
+  - **Phase 6 关闭标准**
+    - 机制边界清晰：Cron 仅做显式 schedule，Heartbeat 仅做任务池轮询决策。
+    - 关键门禁可配置且默认安全。
+    - 回归与集成测试稳定通过。
+    - 可观测信息足够支撑线上定位（含 skip reason 与执行摘要）。
 
 #### 核心设计决策总结：三层防护 + 零 Docker 部署
 

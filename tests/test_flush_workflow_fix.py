@@ -1,4 +1,4 @@
-"""Test for fixed memory flush workflow.
+﻿"""Test for fixed memory flush workflow.
 
 Tests that:
 1. Flush is injected WITHOUT prior compression
@@ -12,7 +12,7 @@ import asyncio
 import tempfile
 import os
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
 from closeclaw.agents.core import AgentCore
@@ -63,7 +63,7 @@ class Test_FlushPromptWithAbsolutePath:
         assert memory_dir in prompt, f"Flush prompt missing absolute path. Prompt:\n{prompt}"
         assert "write_memory_file" in prompt.lower(), f"Flush prompt missing write_memory_file tool. Prompt:\n{prompt}"
         assert "[SILENT_REPLY]" in prompt
-        print(f"✓ Flush prompt correctly references write_memory_file and includes absolute path")
+        print(f"鉁?Flush prompt correctly references write_memory_file and includes absolute path")
 
 
 class Test_FlushWithoutPriorCompression:
@@ -80,7 +80,7 @@ class Test_FlushWithoutPriorCompression:
         
         # Verify prompt includes absolute path
         assert workspace_root in prompt or memory_dir in prompt
-        print(f"✓ Flush prompt includes absolute path to memory directory")
+        print(f"鉁?Flush prompt includes absolute path to memory directory")
 
 
 class Test_TokenCountAfterFlushInjection:
@@ -104,7 +104,7 @@ class Test_TokenCountAfterFlushInjection:
         # (was ~106 before, now more aggressive/explicit)
         assert prompt_tokens > 200, f"Flush prompt too short: {prompt_tokens} tokens"
         assert prompt_tokens < 500, f"Flush prompt too long: {prompt_tokens} tokens"
-        print(f"✓ Flush prompt size: {prompt_tokens} tokens (acceptable for critical system command)")
+        print(f"鉁?Flush prompt size: {prompt_tokens} tokens (acceptable for critical system command)")
 
 
 class Test_MemoryFileCollection:
@@ -127,7 +127,7 @@ class Test_MemoryFileCollection:
         assert len(memories) == 1
         assert memories[0]["name"] == "saved_config.md"
         assert memories[0]["size"] > 0
-        print(f"✓ Collected {len(memories)} memory file(s)")
+        print(f"鉁?Collected {len(memories)} memory file(s)")
 
 
 class Test_FlushClearsMemoryAfterCompletion:
@@ -147,7 +147,7 @@ class Test_FlushClearsMemoryAfterCompletion:
         # Clear it
         coordinator.clear_pending_flush()
         assert coordinator.has_pending_flush() is False
-        print("✓ Pending flush flag correctly cleared")
+        print("鉁?Pending flush flag correctly cleared")
 
 
 class Test_NoDoubleCompression:
@@ -170,8 +170,13 @@ class Test_NoDoubleCompression:
         # 4. LLM gets chance to execute flush
         # 5. Compression happens on NEXT loop if needed
         
-        print("✓ Logic prevents double-compression scenario")
+        print("鉁?Logic prevents double-compression scenario")
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+
+

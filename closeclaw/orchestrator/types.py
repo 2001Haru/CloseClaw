@@ -1,4 +1,4 @@
-"""Core data contracts for Phase5 orchestrator."""
+﻿"""Core data contracts for Phase5 orchestrator."""
 
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
@@ -59,3 +59,4 @@ class RunState:
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_results: list[ToolResult] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+

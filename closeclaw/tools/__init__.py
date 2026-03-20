@@ -1,4 +1,4 @@
-"""Tool system."""
+﻿"""Tool system."""
 
 from .base import (
     tool, BaseTool, ToolRegistry, 
@@ -43,3 +43,4 @@ __all__ = [
     # Web tools
     "web_search_impl",
 ]
+

@@ -1,18 +1,6 @@
-"""Enumerations for CloseClaw system types."""
+﻿"""Enumerations for CloseClaw system types."""
 
 from enum import Enum
-
-
-class Zone(str, Enum):
-    """Trust zones for tool execution.
-    
-    - ZONE_A: Safe operations, auto-execute (e.g., read-only file ops, simple web search)
-    - ZONE_B: Internal operations, silent+log (e.g., logs, metadata updates)
-    - ZONE_C: Dangerous operations, require HITL confirmation (e.g., file writes, deletions, shell)
-    """
-    ZONE_A = "A"
-    ZONE_B = "B"
-    ZONE_C = "C"
 
 
 class AgentState(str, Enum):
@@ -55,3 +43,5 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+
+

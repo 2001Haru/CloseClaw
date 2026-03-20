@@ -1,16 +1,16 @@
-"""CloseClaw - A lightweight and safe Python Agent framework."""
+﻿"""CloseClaw - A lightweight and safe Python Agent framework."""
 
 __version__ = "0.1.0"
 
 from .agents import AgentCore, LLMProvider
 from .config import CloseCrawlConfig, ConfigLoader
 from .types import (
-    Zone, AgentState, OperationType, ChannelType, ToolType,
+    AgentState, OperationType, ChannelType, ToolType,
     Message, ToolCall, ToolResult,
     AuthorizationRequest, AuthorizationResponse,
     Tool, Agent, Session, AgentConfig,
 )
-from .middleware import MiddlewareChain, SafetyGuard, PathSandbox, ZoneBasedPermission
+from .middleware import MiddlewareChain, SafetyGuard, PathSandbox, AuthPermissionMiddleware
 from .tools import get_registered_tools, get_tool_by_name
 from .safety import AuditLogger
 
@@ -23,7 +23,6 @@ __all__ = [
     "CloseCrawlConfig",
     "ConfigLoader",
     # Types - Enums
-    "Zone",
     "AgentState",
     "OperationType",
     "ChannelType",
@@ -43,10 +42,11 @@ __all__ = [
     "MiddlewareChain",
     "SafetyGuard",
     "PathSandbox",
-    "ZoneBasedPermission",
+    "AuthPermissionMiddleware",
     # Tools
     "get_registered_tools",
     "get_tool_by_name",
     # Safety
     "AuditLogger",
 ]
+

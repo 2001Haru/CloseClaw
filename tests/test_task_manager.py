@@ -1,8 +1,8 @@
-"""Tests for TaskManager background task execution."""
+﻿"""Tests for TaskManager background task execution."""
 
 import pytest
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 from closeclaw.agents import TaskManager
 from closeclaw.types import TaskStatus, BackgroundTask
@@ -249,7 +249,7 @@ class TestTaskStateManagement:
             tool_name="old_tool",
             tool_arguments={},
             status=TaskStatus.COMPLETED,
-            created_at=datetime.utcnow(),  # Would be old in real usage
+            created_at=datetime.now(timezone.utc),  # Would be old in real usage
             result="old_result"
         )
         
@@ -309,3 +309,8 @@ class TestTaskWaitFor:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+
+

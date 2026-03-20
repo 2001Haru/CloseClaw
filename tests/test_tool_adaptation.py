@@ -1,4 +1,4 @@
-"""Tests for ToolAdaptationLayer (Phase 2)."""
+﻿"""Tests for ToolAdaptationLayer (Phase 2)."""
 
 import pytest
 import asyncio
@@ -6,7 +6,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 from closeclaw.tools import ToolAdaptationLayer, ExecutionMode, ToolMetadata
-from closeclaw.types import Tool, ToolType, Zone, ToolCall, ToolResult
+from closeclaw.types import Tool, ToolType,  ToolCall, ToolResult
 from closeclaw.agents.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ class TestToolAdaptationLayer:
             name="fast_op",
             description="Fast operation",
             type=ToolType.FILE,
-            zone=Zone.ZONE_A,
+            need_auth=False,
             handler=fast_tool,
         )
         
@@ -41,7 +41,7 @@ class TestToolAdaptationLayer:
             name="slow_op",
             description="Slow operation (web search)",
             type=ToolType.WEBSEARCH,
-            zone=Zone.ZONE_A,
+            need_auth=False,
             handler=slow_tool,
         )
         
@@ -115,7 +115,7 @@ class TestToolAdaptationLayer:
         
         metadata = adapter.get_tool_metadata("slow_op")
         assert metadata.execution_mode == ExecutionMode.ASYNC_BG
-        logger.info("✓ WEBSEARCH tool auto-classified as async")
+        logger.info("WEBSEARCH tool auto-classified as async")
     
     @pytest.mark.asyncio
     async def test_execute_tool_call_sync_mode(self, adapter, sample_tools):
@@ -266,7 +266,7 @@ class TestToolAdaptationIntegration:
             name="test_tool",
             description="Test",
             type=ToolType.FILE,
-            zone=Zone.ZONE_A,
+            need_auth=False,
             handler=test_handler,
         )
         
@@ -283,3 +283,7 @@ if __name__ == "__main__":
     logger = logging.getLogger(__name__)
     
     pytest.main([__file__, "-v"])
+
+
+
+

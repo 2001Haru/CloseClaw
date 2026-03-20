@@ -1,14 +1,14 @@
-"""Tests for Agent.run() main loop (Phase 2)."""
+﻿"""Tests for Agent.run() main loop (Phase 2)."""
 
 import pytest
 import asyncio
 import logging
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from closeclaw.agents import AgentCore
-from closeclaw.types import Message, AgentState, Zone, Tool, AgentConfig, Session, ToolType
+from closeclaw.types import Message, AgentState,  Tool, AgentConfig, Session, ToolType
 from closeclaw.agents.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class TestAgentMainLoop:
     
     @pytest.mark.asyncio
     async def test_main_loop_basic_message_flow(self, agent_setup):
-        """Test: User message → process → response → send.
+        """Test: User message 鈫?process 鈫?response 鈫?send.
         
         Scenario:
         1. User sends a simple message (no tools)
@@ -95,16 +95,16 @@ class TestAgentMainLoop:
         assert output_calls[0]["type"] == "response"
         assert "2+2 equals 4" in output_calls[0]["response"]
         assert agent.state == AgentState.IDLE  # Should be idle after session ends
-        logger.info(f"✅ Basic message flow: {len(output_calls)} outputs captured")
+        logger.info(f"Basic message flow: {len(output_calls)} outputs captured")
     
     @pytest.mark.asyncio
     async def test_main_loop_with_tool_call(self, agent_setup):
-        """Test: User message → tool call → tool result → response.
+        """Test: User message 鈫?tool call 鈫?tool result 鈫?response.
         
         Scenario:
         1. User asks for web search
         2. LLM returns tool_call for web_search
-        3. Agent executes tool (Zone A = auto execute)
+        3. Agent executes tool (Safe = auto execute)
         4. Returns result to LLM
         5. Sends response to user
         """
@@ -119,7 +119,7 @@ class TestAgentMainLoop:
             description="Search the web",
             handler=mock_web_search,
             type=ToolType.WEBSEARCH,
-            zone=Zone.ZONE_A,
+            need_auth=False,
             parameters={"query": {"type": "string"}},
         )
         agent.register_tool(tool)
@@ -169,14 +169,14 @@ class TestAgentMainLoop:
         responses = [o for o in output_calls if o["type"] == "response"]
         assert len(responses) >= 1
         assert len(responses[0].get("tool_results", [])) >= 1
-        logger.info(f"✅ Tool execution: {len(responses[0]['tool_results'])} tool results")
+        logger.info(f"Tool execution: {len(responses[0]['tool_results'])} tool results")
     
     @pytest.mark.asyncio
     async def test_main_loop_auth_required_flow(self, agent_setup):
-        """Test: Zone C operation → auth_request → user approval → execution.
+        """Test: Sensitive operation 鈫?auth_request 鈫?user approval 鈫?execution.
         
         Scenario:
-        1. User requests dangerous operation (Zone C)
+        1. User requests dangerous operation (Sensitive)
         2. Agent enters WAITING_FOR_AUTH state
         3. Auth request sent to user
         4. User approves via approve_auth_request()
@@ -193,7 +193,7 @@ class TestAgentMainLoop:
             description="Delete a file (DANGEROUS)",
             handler=mock_delete_file,
             type=ToolType.FILE,
-            zone=Zone.ZONE_C,  # Requires auth
+            need_auth=True,  # Requires auth
             parameters={"path": {"type": "string"}},
         )
         agent.register_tool(tool)
@@ -259,7 +259,7 @@ class TestAgentMainLoop:
         # Verify auth request was sent
         auth_requests = [o for o in output_calls if o["type"] == "auth_request"]
         assert len(auth_requests) >= 1
-        logger.info(f"✅ Auth request triggered: {auth_requests[0]['auth_request_id']}")
+        logger.info(f"Auth request triggered: {auth_requests[0]['auth_request_id']}")
         
         # Clean up
         agent_task.cancel()
@@ -289,7 +289,7 @@ class TestAgentMainLoop:
         )
         completed_task.status = TaskStatus.COMPLETED
         completed_task.result = {"results": ["result1", "result2"]}
-        completed_task.completed_at = datetime.utcnow()
+        completed_task.completed_at = datetime.now(timezone.utc)
         
         # Mock input
         messages_to_send = [None]  # Exit immediately
@@ -332,7 +332,7 @@ class TestAgentMainLoop:
         task_completions = [o for o in output_calls if o["type"] == "task_completed"]
         assert len(task_completions) >= 1
         assert task_completions[0]["task_id"] == "#001"
-        logger.info(f"✅ Task polling: Notified user of completed task {task_completions[0]['task_id']}")
+        logger.info(f"Task polling: Notified user of completed task {task_completions[0]['task_id']}")
     
     @pytest.mark.asyncio
     async def test_main_loop_state_persistence(self, agent_setup):
@@ -403,7 +403,7 @@ class TestAgentMainLoop:
         
         # Verify restoration
         assert len(agent2.message_history) >= 0  # Should have history (or empty)
-        logger.info(f"✅ State persistence: Saved and restored state snapshot")
+        logger.info("State persistence: Saved and restored state snapshot")
 
 
 class TestAgentMainLoopIntegration:
@@ -454,7 +454,7 @@ class TestAgentMainLoopIntegration:
             description="Crawl a website",
             handler=mock_web_crawl,
             type=ToolType.WEBSEARCH,
-            zone=Zone.ZONE_B,
+            need_auth=False,
             parameters={"url": {"type": "string"}},
         )
         agent.register_tool(tool)
@@ -481,7 +481,7 @@ class TestAgentMainLoopIntegration:
                 return None
         
         output_calls = []
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         async def mock_output_fn(response):
             output_calls.append(response)
@@ -504,13 +504,18 @@ class TestAgentMainLoopIntegration:
             message_output_fn=mock_output_fn,
         )
         
-        elapsed = (datetime.utcnow() - start_time).total_seconds()
+        elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
         
         # Verify agent didn't block (should complete quickly)
         # Note: In real implementation, this would detect tool is long-running
         # and route to TaskManager for non-blocking execution
-        logger.info(f"✅ Background task test completed in {elapsed:.2f}s")
+        logger.info(f"Background task test completed in {elapsed:.2f}s")
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+
+

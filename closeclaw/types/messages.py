@@ -1,8 +1,8 @@
-"""Message and communication types."""
+﻿"""Message and communication types."""
 
 from dataclasses import dataclass, field
 from typing import Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 @dataclass
@@ -94,7 +94,7 @@ class Message:
     @classmethod
     def from_dict(cls, data: dict) -> 'Message':
         timestamp_str = data.get("timestamp")
-        timestamp = datetime.fromisoformat(timestamp_str) if timestamp_str else datetime.utcnow()
+        timestamp = datetime.fromisoformat(timestamp_str) if timestamp_str else datetime.now(timezone.utc)
         
         tool_calls = None
         if "tool_calls" in data:
@@ -159,3 +159,4 @@ class AuthorizationResponse:
             "comment": self.comment,
             "metadata": self.metadata,
         }
+

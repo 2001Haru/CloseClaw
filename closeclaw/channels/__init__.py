@@ -1,4 +1,4 @@
-"""Channels module - Communication interfaces.
+﻿"""Channels module - Communication interfaces.
 
 Phase 3: Telegram, Feishu, CLI channel implementations.
 """
@@ -23,3 +23,4 @@ __all__ = [
     "get_telegram_channel",
     "get_feishu_channel",
 ]
+

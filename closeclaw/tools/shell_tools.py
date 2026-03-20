@@ -1,4 +1,4 @@
-"""Shell command execution tools.
+﻿"""Shell command execution tools.
 
 Uses asyncio.create_subprocess_shell for true non-blocking execution,
 enabling safe TaskManager integration.
@@ -10,7 +10,7 @@ from typing import Any, Optional
 import platform
 
 from .base import tool
-from ..types import Zone, ToolType
+from ..types import ToolType
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 @tool(
     name="shell",
     description="Execute a shell command (Windows CMD or Unix shell)",
-    zone=Zone.ZONE_C,
+    need_auth=True,
     tool_type=ToolType.SHELL,
     parameters={
         "command": {
@@ -100,7 +100,7 @@ async def shell_impl(command: str, timeout: int = 30) -> dict[str, Any]:
 @tool(
     name="pwd",
     description="Print current working directory",
-    zone=Zone.ZONE_A,
+    need_auth=False,
     tool_type=ToolType.SHELL,
     parameters={}
 )
@@ -110,3 +110,4 @@ async def pwd_impl() -> str:
     cwd = os.getcwd()
     logger.info(f"Current directory: {cwd}")
     return cwd
+

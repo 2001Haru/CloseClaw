@@ -1,7 +1,7 @@
-"""Phase5 P1 acceptance tests for same-turn recall completion."""
+﻿"""Phase5 P1 acceptance tests for same-turn recall completion."""
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 
 from closeclaw.agents.core import AgentCore
 from closeclaw.types import AgentConfig, Message, Session, ToolCall
@@ -54,8 +54,8 @@ async def test_phase5_case001_same_turn_completion(temp_workspace):
         channel_type="cli",
         sender_id="u1",
         sender_name="User",
-        content="你还记得我们上次关于F1的决定吗？",
-        timestamp=datetime.utcnow(),
+        content="Do you remember our previous decision about F1?",
+        timestamp=datetime.now(timezone.utc),
     )
 
     result = await agent.process_message(user_message)
@@ -65,3 +65,8 @@ async def test_phase5_case001_same_turn_completion(temp_workspace):
     assert result["tool_results"], "Expected tool execution result"
     assert "Summary:" in result["response"]
     assert result["response"] not in {"OK", "Executed tools.", "Awaiting authorization..."}
+
+
+
+
+

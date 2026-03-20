@@ -1,4 +1,4 @@
-"""Token counting accuracy verification for Phase 4."""
+﻿"""Token counting accuracy verification for Phase 4."""
 
 import pytest
 import tiktoken
@@ -65,9 +65,9 @@ class TestTokenCountingAccuracy:
         """Test token counting with unicode characters."""
         unicode_texts = [
             "你好，世界",  # Chinese
-            "Привет, мир",  # Russian
-            "مرحبا بالعالم",  # Arabic
-            "こんにちは",  # Japanese
+            "袩褉懈胁械褌, 屑懈褉",  # Russian
+            "賲乇丨亘丕 亘丕賱毓丕賱賲",  # Arabic
+            "こんにちは、世界",  # Japanese
         ]
         
         for text in unicode_texts:
@@ -198,7 +198,7 @@ def fibonacci(n):
     if n <= 1: return n
     return fibonacci(n-1) + fibonacci(n-2)
 """),
-            ("unicode", "你好世界 Привет مرحبا"),
+            ("unicode", "浣犲ソ涓栫晫 袩褉懈胁械褌 賲乇丨亘丕"),
         ]
         
         results = []
@@ -234,3 +234,7 @@ def fibonacci(n):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
+
+
+
+

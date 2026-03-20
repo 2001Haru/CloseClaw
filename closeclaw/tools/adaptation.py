@@ -1,4 +1,4 @@
-"""Tool adaptation layer for detecting and handling long-running operations.
+﻿"""Tool adaptation layer for detecting and handling long-running operations.
 
 This layer sits between Agent and tool execution, implementing the strategy:
   - Mark tools with estimated execution time
@@ -7,8 +7,8 @@ This layer sits between Agent and tool execution, implementing the strategy:
   - Return task_id to user immediately (non-blocking)
 
 From Planning.md Phase 2:
-  "工具立即返回 task_id（如\"#001\") → Agent继续循环"
-  (Tool returns task_id immediately → Agent continues loop)
+    "Tool immediately returns task_id (e.g. '#001') -> Agent continues loop"
+    (Tool returns task_id immediately -> Agent continues loop)
 """
 
 import logging
@@ -118,7 +118,7 @@ class ToolAdaptationLayer:
         )
         
         self._tool_metadata[tool.name] = metadata
-        logger.info(f"Registered tool: {tool.name} (mode={mode.value}, duration≈{estimated_duration_seconds}s)")
+        logger.info(f"Registered tool: {tool.name} (mode={mode.value}, duration~{estimated_duration_seconds}s)")
     
     def get_tool_metadata(self, tool_name: str) -> Optional[ToolMetadata]:
         """Get metadata for a tool."""
@@ -177,7 +177,7 @@ class ToolAdaptationLayer:
         use_background = metadata.should_use_background_task()
         
         if use_background and task_manager:
-            logger.info(f"🔄 Route to background: {tool_name} (est. {metadata.estimated_duration_seconds}s)")
+            logger.info(f"Route to background: {tool_name} (est. {metadata.estimated_duration_seconds}s)")
             
             # Create background task
             task_id = await task_manager.create_task(
@@ -185,7 +185,7 @@ class ToolAdaptationLayer:
                 arguments=tool_call.arguments,
             )
             
-            logger.info(f"✓ Background task created: {task_id}")
+            logger.info(f"Background task created: {task_id}")
             
             # Return task_id to caller
             result = ToolResult(
@@ -204,7 +204,7 @@ class ToolAdaptationLayer:
             return result
         
         else:
-            logger.info(f"⚡ Direct execution: {tool_name} (est. {metadata.estimated_duration_seconds}s)")
+            logger.info(f"Direct execution: {tool_name} (est. {metadata.estimated_duration_seconds}s)")
             
             # Execute directly (sync mode)
             if not direct_executor:
@@ -219,9 +219,9 @@ class ToolAdaptationLayer:
             result = await direct_executor(tool_call)
             
             if result.status == "success":
-                logger.info(f"✓ Direct execution completed: {tool_name}")
+                logger.info(f"Direct execution completed: {tool_name}")
             else:
-                logger.warning(f"✗ Direct execution failed: {tool_name} ({result.status})")
+                logger.warning(f"Direct execution failed: {tool_name} ({result.status})")
             
             result.metadata = {
                 "routing": "direct",
@@ -255,7 +255,9 @@ class ToolAdaptationLayer:
                 "name": name,
                 "mode": metadata.execution_mode.value,
                 "estimated_seconds": metadata.estimated_duration_seconds,
-                "zone": metadata.tool.zone.value,
+                "need_auth": metadata.tool.need_auth,
                 "type": metadata.tool.type.value,
             })
         return tools
+
+

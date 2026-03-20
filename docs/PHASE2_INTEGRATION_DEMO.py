@@ -1,23 +1,23 @@
-"""
+﻿"""
 Phase 2 Integration Checkpoint: TaskManager + Agent.run() Demo
 
 This module demonstrates the Phase 2 architecture from Planning.md:
-  "同步主循环 + TaskManager异步管理" (Synchronous Main Loop + Async TaskManager)
+  "鍚屾涓诲惊鐜?+ TaskManager寮傛绠＄悊" (Synchronous Main Loop + Async TaskManager)
 
 Flow:
-  1. User input → Agent.process_message()
-  2. Detect long-running tool → create background task (non-blocking)
+  1. User input ->Agent.process_message()
+  2. Detect long-running tool ->create background task (non-blocking)
   3. Task returns task_id immediately (e.g., "#001")
   4. Main loop continues (doesn't block on task)
   5. Each loop iteration: poll_background_tasks() checks for completion
-  6. Task completes → notify user with result
+  6. Task completes ->notify user with result
 
 Key Design Points:
-  ✓ Synchronous main loop (easy to debug)
-  ✓ Long ops via TaskManager (asyncio.create_task, non-blocking)
-  ✓ HITL for Zone C (立即確認 = immediate confirmation)
-  ✓ State persistence (完整持久化 = complete persistence)
-  ✓ Task resumption on restart (load_from_state)
+  [OK]Synchronous main loop (easy to debug)
+  [OK]Long ops via TaskManager (asyncio.create_task, non-blocking)
+  [OK]HITL for Zone C (绔嬪嵆纰鸿獚 = immediate confirmation)
+  [OK]State persistence (瀹屾暣鎸佷箙鍖?= complete persistence)
+  [OK]Task resumption on restart (load_from_state)
 """
 
 import asyncio
@@ -40,9 +40,9 @@ logger = logging.getLogger(__name__)
 
 async def simulate_web_search(query: str, delay_seconds: float = 2) -> dict:
     """Simulate a web search that takes time."""
-    logger.info(f"🌐 Web search starting: '{query}' (simulating {delay_seconds}s delay)")
+    logger.info(f"[CLOUD] Web search starting: '{query}' (simulating {delay_seconds}s delay)")
     await asyncio.sleep(delay_seconds)
-    logger.info(f"✅ Web search completed: '{query}'")
+    logger.info(f"[OK]Web search completed: '{query}'")
     return {
         "query": query,
         "results": [
@@ -55,9 +55,9 @@ async def simulate_web_search(query: str, delay_seconds: float = 2) -> dict:
 
 async def simulate_file_read(path: str, delay_seconds: float = 1) -> dict:
     """Simulate reading a large file."""
-    logger.info(f"📂 Reading file: {path} (simulating {delay_seconds}s delay)")
+    logger.info(f"Reading file: {path} (simulating {delay_seconds}s delay)")
     await asyncio.sleep(delay_seconds)
-    logger.info(f"✅ File read completed: {path}")
+    logger.info(f"[OK]File read completed: {path}")
     return {
         "path": path,
         "content": "Large file content...",
@@ -115,7 +115,7 @@ async def demo_main():
     # Create TaskManager and integrate
     task_manager = TaskManager()
     agent.set_task_manager(task_manager)
-    logger.info("✓ TaskManager integrated with AgentCore")
+    logger.info("[OK]TaskManager integrated with AgentCore")
     logger.info("")
     
     # Register tools
@@ -128,7 +128,7 @@ async def demo_main():
         parameters={"query": {"type": "string"}},
     )
     agent.register_tool(web_search_tool)
-    logger.info("✓ Tool registered: web_search")
+    logger.info("[OK]Tool registered: web_search")
     
     file_read_tool = Tool(
         name="read_file",
@@ -139,16 +139,16 @@ async def demo_main():
         parameters={"path": {"type": "string"}},
     )
     agent.register_tool(file_read_tool)
-    logger.info("✓ Tool registered: read_file")
+    logger.info("[OK]Tool registered: read_file")
     logger.info("")
     
     # ========================================================================
     # DEMO SCENARIO 1: Non-blocking background task
     # ========================================================================
     
-    logger.info("─" * 70)
+    logger.info("-" * 70)
     logger.info("SCENARIO 1: Long-running task (non-blocking)")
-    logger.info("─" * 70)
+    logger.info("-" * 70)
     logger.info("")
     
     # Simulate user input: one message then exit
@@ -169,7 +169,7 @@ async def demo_main():
         try:
             msg = next(message_queue)
             if msg:
-                logger.info(f"👤 User: {msg.content}")
+                logger.info(f"User: {msg.content}")
             return msg
         except StopIteration:
             return None
@@ -181,13 +181,13 @@ async def demo_main():
         msg_type = response.get("type")
         
         if msg_type == "response":
-            logger.info(f"🤖 Agent response: {response.get('response')[:80]}...")
+            logger.info(f"[LLM] Agent response: {response.get('response')[:80]}...")
             if response.get("tool_calls"):
                 logger.info(f"   Tool calls: {len(response['tool_calls'])}")
         elif msg_type == "task_completed":
             task_id = response.get("task_id")
             status = response.get("status")
-            logger.info(f"✅ Task {task_id} completed ({status})")
+            logger.info(f"[OK]Task {task_id} completed ({status})")
             logger.info(f"   Result: {json.dumps(response.get('result'), indent=2)[:100]}...")
     
     # Run agent loop
@@ -202,7 +202,7 @@ async def demo_main():
     elapsed = (datetime.now() - start_time).total_seconds()
     
     logger.info("")
-    logger.info(f"⏱️  Agent loop completed in {elapsed:.2f} seconds")
+    logger.info(f"[TIME]  Agent loop completed in {elapsed:.2f} seconds")
     logger.info(f"   Total outputs sent: {len(output_messages)}")
     logger.info("")
     
@@ -210,9 +210,9 @@ async def demo_main():
     # DEMO SCENARIO 2: State persistence
     # ========================================================================
     
-    logger.info("─" * 70)
+    logger.info("-" * 70)
     logger.info("SCENARIO 2: State persistence and recovery")
-    logger.info("─" * 70)
+    logger.info("-" * 70)
     logger.info("")
     
     # Create background task manually
@@ -221,13 +221,13 @@ async def demo_main():
         "web_search",
         {"query": "machine learning fundamentals"}
     )
-    logger.info(f"✓ Task created with ID: {task_id}")
+    logger.info(f"[OK]Task created with ID: {task_id}")
     logger.info("")
     
     # Save state
     logger.info("Saving agent state to dict (simulating state.json)")
     state_snapshot = await agent._save_state()
-    logger.info(f"✓ State saved:")
+    logger.info(f"[OK]State saved:")
     logger.info(f"   - Active tasks: {list(state_snapshot.get('active_tasks', {}).keys())}")
     logger.info(f"   - Completed tasks: {list(state_snapshot.get('completed_results', {}).keys())}")
     logger.info(f"   - Message history: {len(state_snapshot.get('message_history', []))} messages")
@@ -239,7 +239,7 @@ async def demo_main():
     # Poll for completed tasks
     logger.info("Polling for completed tasks...")
     completed = await agent.poll_background_tasks()
-    logger.info(f"✓ Completed tasks: {len(completed)}")
+    logger.info(f"[OK]Completed tasks: {len(completed)}")
     for task in completed:
         logger.info(f"   - {task['task_id']}: {task['status']}")
     logger.info("")
@@ -249,19 +249,19 @@ async def demo_main():
     # ========================================================================
     
     logger.info("=" * 70)
-    logger.info("✅ PHASE 2 INTEGRATION DEMO COMPLETE")
+    logger.info("[OK]PHASE 2 INTEGRATION DEMO COMPLETE")
     logger.info("=" * 70)
     logger.info("")
     logger.info("Key Achievements:")
-    logger.info("  ✓ TaskManager creates background tasks (non-blocking)")
-    logger.info("  ✓ Agent.run() main loop doesn't block on long operations")
-    logger.info("  ✓ State can be saved and restored")
-    logger.info("  ✓ Tasks can be polled for completion status")
+    logger.info("  [OK]TaskManager creates background tasks (non-blocking)")
+    logger.info("  [OK]Agent.run() main loop doesn't block on long operations")
+    logger.info("  [OK]State can be saved and restored")
+    logger.info("  [OK]Tasks can be polled for completion status")
     logger.info("")
     logger.info("Architecture confirmed:")
-    logger.info("  └─ Synchronous main loop (easy to debug)")
-    logger.info("     └─ asyncio.create_task() for background work")
-    logger.info("        └─ poll_background_tasks() each loop iteration")
+    logger.info("  - Synchronous main loop (easy to debug)")
+    logger.info("     - asyncio.create_task() for background work")
+    logger.info("        - poll_background_tasks() each loop iteration")
     logger.info("")
     logger.info("Next steps:")
     logger.info("  1. Tool adaptation layer (detect long-running ops)")
@@ -272,3 +272,4 @@ async def demo_main():
 
 if __name__ == "__main__":
     asyncio.run(demo_main())
+

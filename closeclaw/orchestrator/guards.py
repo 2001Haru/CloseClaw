@@ -1,4 +1,4 @@
-"""Guard contracts and baseline guard implementations for Phase5 P2."""
+﻿"""Guard contracts and baseline guard implementations for Phase5 P2."""
 
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional, Protocol
@@ -78,3 +78,4 @@ class PostActSafetyGuard:
 
     async def post_act(self, state: RunState, action: Action, observation: Observation) -> Optional[GuardDecision]:
         return None
+

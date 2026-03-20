@@ -1,6 +1,6 @@
-"""CloseClaw type system and domain models."""
+﻿"""CloseClaw type system and domain models."""
 
-from .enums import Zone, AgentState, OperationType, ChannelType, ToolType, TaskStatus
+from .enums import AgentState, OperationType, ChannelType, ToolType, TaskStatus
 from .messages import (
     Message, ToolCall, ToolResult, 
     AuthorizationRequest, AuthorizationResponse
@@ -9,7 +9,6 @@ from .models import Tool, Agent, Session, AgentConfig, BackgroundTask, ContextMa
 
 __all__ = [
     # Enums
-    "Zone",
     "AgentState", 
     "OperationType",
     "ChannelType",
@@ -32,3 +31,5 @@ __all__ = [
     "ContextManagementSettings",
     "LLMSettings",
 ]
+
+

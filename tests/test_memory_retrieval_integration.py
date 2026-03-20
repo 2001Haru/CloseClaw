@@ -1,15 +1,15 @@
-"""Integration tests for memory retrieval in AgentCore."""
+﻿"""Integration tests for memory retrieval in AgentCore."""
 
 import pytest
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 import numpy as np
 
 from closeclaw.agents.core import AgentCore
 from closeclaw.types import (
-    AgentConfig, Session, Message, ToolCall, ToolResult, Zone, ToolType
+    AgentConfig, Session, Message, ToolCall, ToolResult,  ToolType
 )
 
 @pytest.fixture
@@ -94,3 +94,7 @@ async def test_retrieve_memory_no_results(agent):
     
     assert result.status == "success"
     assert "No relevant memories found" in result.result
+
+
+
+

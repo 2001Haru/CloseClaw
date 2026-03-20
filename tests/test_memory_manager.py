@@ -1,4 +1,4 @@
-"""Tests for MemoryManager."""
+﻿"""Tests for MemoryManager."""
 
 import os
 import shutil
@@ -40,6 +40,7 @@ def memory_manager(temp_workspace):
 def test_init_db(memory_manager):
     """Test database initialization."""
     assert os.path.exists(memory_manager.db_path)
+    assert os.path.dirname(memory_manager.db_path).endswith(os.path.join("test_workspace", "memory"))
     
     import sqlite3
     conn = sqlite3.connect(memory_manager.db_path)
@@ -139,3 +140,21 @@ def test_clear_memory(memory_manager):
         assert cursor.fetchone()[0] == 0
     finally:
         conn.close()
+
+
+def test_memory_db_path_under_workspace_memory(temp_workspace):
+    """Memory database should live under workspace_root/memory."""
+    with patch("closeclaw.memory.memory_manager.TextEmbedding") as MockEmbedding:
+        mock_instance = MockEmbedding.return_value
+
+        def mock_embed(texts):
+            for _ in texts:
+                yield np.random.rand(384).astype(np.float32)
+
+        mock_instance.embed.side_effect = mock_embed
+
+        manager = MemoryManager(workspace_root=temp_workspace)
+        assert manager.db_path == os.path.join(temp_workspace, "memory", "memory.sqlite")
+
+
+

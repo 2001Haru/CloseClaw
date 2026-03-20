@@ -1,12 +1,14 @@
+﻿from __future__ import annotations
+
 """Telegram channel - Integration with Telegram Bot API.
 
 Uses python-telegram-bot v20+ (async-native).
 Implements long polling for message reception and Inline Keyboard
-for HITL (Human-in-the-Loop) Zone C confirmations.
+for HITL (Human-in-the-Loop) sensitive operation confirmations.
 
 From Planning.md:
-  "保留 Telegram（国际标准）"
-  "Agent 处于 WAITING_FOR_AUTH 状态直到收到特定 User ID 的确认"
+    "Retain Telegram (international standard)"
+    "Agent stays in WAITING_FOR_AUTH until approved by a specific user ID"
 """
 
 import asyncio
@@ -38,7 +40,7 @@ class TelegramChannel(BaseChannel):
     
     Features:
     - Long polling message reception
-    - Inline Keyboard for HITL confirmation (Zone C)
+    - Inline Keyboard for HITL confirmation (need_auth tools)
     - Admin user ID verification for auth approvals
     - Background task completion notifications
     - Structured Diff preview in messages
@@ -56,7 +58,7 @@ class TelegramChannel(BaseChannel):
         
         Args:
             token: Bot token from @BotFather
-            admin_user_ids: User IDs permitted to approve Zone C operations
+            admin_user_ids: User IDs permitted to approve sensitive operations
             config: Additional configuration
         """
         if not HAS_TELEGRAM:
@@ -70,10 +72,10 @@ class TelegramChannel(BaseChannel):
         self.token = token
         self.admin_user_ids = [str(uid) for uid in (admin_user_ids or [])]
         
-        # Message queue: telegram updates → agent processing
+        # Message queue: telegram updates -> agent processing
         self._message_queue: asyncio.Queue[Optional[Message]] = asyncio.Queue()
         
-        # Auth response futures: auth_request_id → Future[AuthorizationResponse]
+        # Auth response futures: auth_request_id -> Future[AuthorizationResponse]
         self._auth_futures: dict[str, asyncio.Future] = {}
         
         # Telegram application
@@ -182,12 +184,12 @@ class TelegramChannel(BaseChannel):
             if tool_calls:
                 for tc in tool_calls:
                     name = tc.get("name", "?") if isinstance(tc, dict) else str(tc)
-                    parts.append(f"🔧 *Tool:* `{name}`")
+                    parts.append(f"[TOOL] *Tool:* `{name}`")
             
             if tool_results:
                 for tr in tool_results:
                     status = tr.get("status", "?") if isinstance(tr, dict) else str(tr)
-                    icon = "✅" if status == "success" else "⏳" if status == "task_created" else "❌"
+                    icon = "[OK]" if status == "success" else ("[TASK]" if status == "task_created" else "[ERR]")
                     parts.append(f"{icon} *Status:* `{status}`")
             
             if text:
@@ -205,9 +207,9 @@ class TelegramChannel(BaseChannel):
             result = response.get("result", "")
             error = response.get("error")
             
-            text = f"📬 *Task Completed*\nTask: `{task_id}` | Status: `{status}`"
+            text = f"*Task Completed*\nTask: `{task_id}` | Status: `{status}`"
             if error:
-                text += f"\n❌ Error: {error}"
+                text += f"\nError: {error}"
             elif result:
                 result_str = str(result)[:500]
                 text += f"\nResult: {result_str}"
@@ -216,7 +218,7 @@ class TelegramChannel(BaseChannel):
             
         elif resp_type == "error":
             error = response.get("error", "Unknown error")
-            await safe_send(f"❌ *Error:* {error}")
+            await safe_send(f"*Error:* {error}")
     
     async def send_auth_request(self,
                                 auth_request_id: str,
@@ -241,7 +243,7 @@ class TelegramChannel(BaseChannel):
         
         # Build message text
         text_parts = [
-            "⚠️ *Zone C Operation — Authorization Required*",
+            "*Sensitive Operation - Authorization Required*",
             f"Tool: `{tool_name}`",
             f"Description: {description}",
         ]
@@ -255,8 +257,8 @@ class TelegramChannel(BaseChannel):
         # Create Inline Keyboard
         keyboard = InlineKeyboardMarkup([
             [
-                InlineKeyboardButton("✅ Approve", callback_data=f"auth_yes:{auth_request_id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"auth_no:{auth_request_id}"),
+                InlineKeyboardButton("Approve", callback_data=f"auth_yes:{auth_request_id}"),
+                InlineKeyboardButton("Reject", callback_data=f"auth_no:{auth_request_id}"),
             ]
         ])
         
@@ -356,7 +358,7 @@ class TelegramChannel(BaseChannel):
         # Verify admin permission
         if user_id not in self.admin_user_ids:
             await query.edit_message_text(
-                text="❌ You are not authorized to approve this operation.",
+                text="You are not authorized to approve this operation.",
             )
             logger.warning(f"Unauthorized auth attempt from user {user_id}")
             return
@@ -380,7 +382,7 @@ class TelegramChannel(BaseChannel):
             logger.warning(f"[DEBUG] No active future for {auth_request_id}! future={future}")
         
         # Update the message to show result
-        status_text = "✅ Approved" if approved else "❌ Rejected"
+        status_text = "Approved" if approved else "Rejected"
         user_name = query.from_user.full_name or query.from_user.username or user_id
         
         try:
@@ -392,4 +394,6 @@ class TelegramChannel(BaseChannel):
         except Exception as e:
             logger.error(f"Failed to edit auth result message: {e}")
         
-        logger.info(f"Auth response received: {auth_request_id} → {status_text} by {user_name}")
+        logger.info(f"Auth response received: {auth_request_id} -> {status_text} by {user_name}")
+
+

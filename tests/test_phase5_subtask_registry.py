@@ -1,4 +1,4 @@
-"""P4 tests for subtask registry lifecycle and error semantics."""
+﻿"""P4 tests for subtask registry lifecycle and error semantics."""
 
 import pytest
 
@@ -69,3 +69,7 @@ def test_cancel_subtask_sets_terminal_result():
     assert cancelled.status == SubtaskStatus.CANCELLED
     assert cancelled.result is not None
     assert cancelled.result.error == "user_cancelled"
+
+
+
+

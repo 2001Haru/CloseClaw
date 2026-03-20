@@ -1,12 +1,12 @@
-"""Middleware system for permission checks and safety guards."""
+﻿"""Middleware system for permission checks and safety guards."""
 
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
-from ..types import Tool, Session, Zone, OperationType, ToolType
+from ..types import Tool, Session, OperationType, ToolType
 
 logger = logging.getLogger(__name__)
 
@@ -140,21 +140,19 @@ class PathSandbox(Middleware):
         return {"status": "allow"}
 
 
-class ZoneBasedPermission(Middleware):
-    """Third middleware: Zone-based permission system.
-    
-    Backwards compatibility:
-    - Accepts legacy admin_user_id kwarg (ignored) to avoid breaking tests using the older signature.
-    """
-    
-    def __init__(self, require_auth_for_zones: list[Zone] = None, admin_user_id: Optional[str] = None):
-        """Initialize zone-based permissions.
-        
+class AuthPermissionMiddleware(Middleware):
+    """Third middleware: need_auth-based permission system."""
+
+    def __init__(
+        self,
+        default_need_auth: bool = False,
+    ):
+        """Initialize permission middleware.
+
         Args:
-            require_auth_for_zones: Zones requiring auth (default: [Zone.ZONE_C])
-            admin_user_id: Legacy compatibility parameter (ignored)
+            default_need_auth: Default auth behavior when no hints are provided.
         """
-        self.require_auth_for_zones = require_auth_for_zones or [Zone.ZONE_C]
+        self.default_need_auth = default_need_auth
     
     async def process(self,
                      tool: Tool,
@@ -162,15 +160,17 @@ class ZoneBasedPermission(Middleware):
                      session: Optional[Session],
                      user_id: Optional[str] = None,
                      **kwargs: Any) -> dict[str, Any]:
-        """Check if tool requires authorization based on zone."""
-        
-        if tool.zone in self.require_auth_for_zones:
+        """Check if tool requires authorization based on need_auth."""
+
+        requires_auth = getattr(tool, "need_auth", self.default_need_auth)
+
+        if requires_auth:
             # Generate diff preview for FILE type operations
             diff_preview = None
             if tool.type == ToolType.FILE and arguments.get("operation") in ["write", "delete"]:
                 diff_preview = self._generate_diff_preview(tool, arguments)
             
-            auth_id = f"auth_{datetime.utcnow().timestamp()}"
+            auth_id = f"auth_{datetime.now(timezone.utc).timestamp()}"
             auth_request = {
                 "id": auth_id,
                 "tool_name": tool.name,
@@ -200,11 +200,11 @@ class ZoneBasedPermission(Middleware):
         
         Returns format:
         ```
-        文件：path/to/file.txt | 操作：modify
-        ─────────────────────
+        鏂囦欢锛歱ath/to/file.txt | 鎿嶄綔锛歮odify
+        鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         - old line 1
         + new line 2
-        ─────────────────────
+        鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         ```
         """
         try:
@@ -219,8 +219,8 @@ class ZoneBasedPermission(Middleware):
             new_lines = new_content.split("\n")[:5]
             
             diff_lines = [
-                f"文件：{path} | 操作：{operation}",
-                "─" * 50,
+                f"File: {path} | Operation: {operation}",
+                "-" * 50,
             ]
             
             # Simple line-by-line diff
@@ -235,7 +235,7 @@ class ZoneBasedPermission(Middleware):
                     if new:
                         diff_lines.append(f"+ {new[:80]}")
             
-            diff_lines.append("─" * 50)
+            diff_lines.append("-" * 50)
             return "\n".join(diff_lines)
             
         except Exception as e:
@@ -301,6 +301,7 @@ __all__ = [
     "Middleware",
     "SafetyGuard",
     "PathSandbox",
-    "ZoneBasedPermission",
+    "AuthPermissionMiddleware",
     "MiddlewareChain",
 ]
+

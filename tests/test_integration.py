@@ -1,16 +1,16 @@
-"""Integration tests for the complete Phase 1 system."""
+﻿"""Integration tests for the complete Phase 1 system."""
 
 import pytest
 import tempfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 from closeclaw.agents.core import AgentCore
 from closeclaw.types import (
-    Zone, ToolType, AgentState, Tool, Session, Message,
+    ToolType, AgentState, Tool, Session, Message,
     ToolCall, AuthorizationRequest, AuthorizationResponse
 )
-from closeclaw.middleware import SafetyGuard, PathSandbox, ZoneBasedPermission, MiddlewareChain
+from closeclaw.middleware import SafetyGuard, PathSandbox, AuthPermissionMiddleware, MiddlewareChain
 from closeclaw.config import ConfigLoader, CloseCrawlConfig, LLMConfig
 from closeclaw.safety import AuditLogger
 
@@ -76,7 +76,7 @@ class TestEnd2EndWorkflow:
         read_tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         agent.register_tool(read_tool)
@@ -87,18 +87,23 @@ class TestEnd2EndWorkflow:
             user_id="user_001",
             channel_type="cli"
         )
+        await agent.start_session("session_001", "user_001", "cli")
         
         # Process message
         message = Message(
-            role="user",
+            id="msg_safe_read",
+            channel_type="cli",
+            sender_id="user_001",
+            sender_name="User",
             content=f"Please read {test_file}",
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         
-        response = await agent.process_message(message, session)
+        response = await agent.process_message(message)
         
         assert response is not None
-        assert isinstance(response, Message)
+        assert isinstance(response, dict)
+        assert "response" in response
     
     @pytest.mark.asyncio
     async def test_dangerous_operation_requires_auth(self, integration_workspace):
@@ -125,10 +130,14 @@ class TestEnd2EndWorkflow:
         delete_tool = Tool(
             name="delete_file",
             description="Delete file",
-            zone=Zone.ZONE_C,
-            type=ToolType.FILE
+            need_auth=True,
+            type=ToolType.FILE,
+            handler=lambda **kwargs: "deleted"
         )
         agent.register_tool(delete_tool)
+        agent.set_middleware_chain(
+            MiddlewareChain([AuthPermissionMiddleware()])
+        )
         
         # Create test file
         delete_file = Path(integration_workspace) / "data" / "deleteme.txt"
@@ -139,16 +148,16 @@ class TestEnd2EndWorkflow:
             user_id="user_002",
             channel_type="cli"
         )
+        agent.current_session = session
         
         # Process delete request
         tool_call = ToolCall(
-            id="tc_001",
-            tool_name="delete_file",
-            arguments={"path": str(delete_file)},
-            timestamp=datetime.utcnow()
+            tool_id="tc_001",
+            name="delete_file",
+            arguments={"path": str(delete_file)}
         )
         
-        result = await agent._process_tool_call(tool_call, session)
+        result = await agent._process_tool_call(tool_call)
         
         # Should create auth request or be in waiting state
         assert agent.state == AgentState.WAITING_FOR_AUTH or agent.pending_auth_requests
@@ -164,7 +173,7 @@ class TestMultiLayerSecurity:
         middlewares = [
             SafetyGuard(),
             PathSandbox(integration_workspace),
-            ZoneBasedPermission(admin_user_id="admin_001")
+            AuthPermissionMiddleware()
         ]
         chain = MiddlewareChain(middlewares)
         
@@ -178,7 +187,7 @@ class TestMultiLayerSecurity:
         safe_tool = Tool(
             name="read_file",
             description="Read",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -196,7 +205,7 @@ class TestMultiLayerSecurity:
         shell_tool = Tool(
             name="shell",
             description="Shell",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.SHELL
         )
         
@@ -211,7 +220,7 @@ class TestMultiLayerSecurity:
         file_tool = Tool(
             name="file",
             description="File",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.FILE
         )
         
@@ -222,11 +231,11 @@ class TestMultiLayerSecurity:
         )
         assert result["status"] == "block"
         
-        # Test 4: Zone C operation requires auth at Layer 3
-        zone_c_tool = Tool(
+        # Test 4: Sensitive operation requires auth at Layer 3
+        sensitive_tool = Tool(
             name="dangerous",
             description="Dangerous",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.FILE
         )
         
@@ -234,7 +243,7 @@ class TestMultiLayerSecurity:
         dangerous_file.write_text("dangerous")
         
         result = await chain.execute(
-            tool=zone_c_tool,
+            tool=sensitive_tool,
             arguments={"path": str(dangerous_file)},
             session=session
         )
@@ -348,13 +357,13 @@ class TestComplexScenarios:
         read_tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         write_tool = Tool(
             name="write_file",
             description="Write file",
-            zone=Zone.ZONE_B,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -370,15 +379,19 @@ class TestComplexScenarios:
             user_id="processor_user",
             channel_type="cli"
         )
+        await agent.start_session("workflow_session", "processor_user", "cli")
         
         # Process
         message = Message(
-            role="user",
+            id="msg_process_file",
+            channel_type="cli",
+            sender_id="processor_user",
+            sender_name="User",
             content="Process the input file",
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         
-        response = await agent.process_message(message, session)
+        response = await agent.process_message(message)
         assert response is not None
     
     @pytest.mark.asyncio
@@ -407,7 +420,7 @@ class TestComplexScenarios:
         delete_tool = Tool(
             name="delete_file",
             description="Delete file",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.FILE
         )
         agent.register_tool(delete_tool)
@@ -417,6 +430,7 @@ class TestComplexScenarios:
             user_id="user_requesting_delete",
             channel_type="cli"
         )
+        agent.current_session = session
         
         # Create file to delete
         target_file = Path(integration_workspace) / "data" / "target.txt"
@@ -424,28 +438,23 @@ class TestComplexScenarios:
         
         # Attempt deletion (should require auth)
         tool_call = ToolCall(
-            id="delete_1",
-            tool_name="delete_file",
-            arguments={"path": str(target_file)},
-            timestamp=datetime.utcnow()
+            tool_id="delete_1",
+            name="delete_file",
+            arguments={"path": str(target_file)}
         )
         
-        result = await agent._process_tool_call(tool_call, session)
+        result = await agent._process_tool_call(tool_call)
         
         # Should be waiting for auth
         if agent.pending_auth_requests:
             auth_id = list(agent.pending_auth_requests.keys())[0]
             
             # Approve authorization
-            approval = AuthorizationResponse(
-                request_id=auth_id,
+            result = await agent.approve_auth_request(
+                auth_request_id=auth_id,
+                user_id="admin_001",
                 approved=True,
-                approver_id="admin_001",
-                reason="User confirmed identity",
-                timestamp=datetime.utcnow()
             )
-            
-            result = await agent.approve_auth_request(approval)
             
             # Auth should be cleared
             assert auth_id not in agent.pending_auth_requests
@@ -477,7 +486,7 @@ class TestErrorRecovery:
         read_tool = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         agent.register_tool(read_tool)
@@ -487,16 +496,16 @@ class TestErrorRecovery:
             user_id="user",
             channel_type="cli"
         )
+        agent.current_session = session
         
         # Try to read nonexistent file
         tool_call = ToolCall(
-            id="fail_1",
-            tool_name="read_file",
-            arguments={"path": str(Path(integration_workspace) / "nonexistent.txt")},
-            timestamp=datetime.utcnow()
+            tool_id="fail_1",
+            name="read_file",
+            arguments={"path": str(Path(integration_workspace) / "nonexistent.txt")}
         )
         
-        result = await agent._process_tool_call(tool_call, session)
+        result = await agent._process_tool_call(tool_call)
         
         # Agent should handle error and continue
         assert agent.state != AgentState.ERROR or agent.state == AgentState.ERROR
@@ -506,13 +515,12 @@ class TestErrorRecovery:
         success_file.write_text("success")
         
         tool_call2 = ToolCall(
-            id="success_1",
-            tool_name="read_file",
-            arguments={"path": str(success_file)},
-            timestamp=datetime.utcnow()
+            tool_id="success_1",
+            name="read_file",
+            arguments={"path": str(success_file)}
         )
         
-        result2 = await agent._process_tool_call(tool_call2, session)
+        result2 = await agent._process_tool_call(tool_call2)
         assert result2 is not None
 
 
@@ -527,7 +535,7 @@ class TestPerformance:
         middlewares = [
             SafetyGuard(),
             PathSandbox(integration_workspace),
-            ZoneBasedPermission()
+            AuthPermissionMiddleware()
         ]
         chain = MiddlewareChain(middlewares)
         
@@ -540,7 +548,7 @@ class TestPerformance:
         tool = Tool(
             name="perf_tool",
             description="Performance test",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         
@@ -560,3 +568,8 @@ class TestPerformance:
         # Execution should be fast
         avg_time = (end - start) / 10
         assert avg_time < 1.0  # Should be less than 1 second per operation
+
+
+
+
+

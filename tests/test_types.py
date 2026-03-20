@@ -1,10 +1,10 @@
-"""Tests for types system."""
+﻿"""Tests for types system."""
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 
 from closeclaw.types import (
-    Zone, AgentState, ToolType, OperationType, ChannelType,
+    AgentState, ToolType, OperationType, ChannelType,
     Tool, Session, Agent, AgentConfig,
     Message, ToolCall, ToolResult,
     AuthorizationRequest, AuthorizationResponse
@@ -13,12 +13,6 @@ from closeclaw.types import (
 
 class TestEnums:
     """Test enumeration definitions."""
-    
-    def test_zone_enum_values(self):
-        """Test Zone enum has expected values."""
-        assert Zone.ZONE_A.value == "A"
-        assert Zone.ZONE_B.value == "B"
-        assert Zone.ZONE_C.value == "C"
     
     def test_agent_state_enum_values(self):
         """Test AgentState enum has expected values."""
@@ -53,7 +47,7 @@ class TestTool:
         """Test basic tool creation."""
         assert sample_tool_file.name == "read_file"
         assert sample_tool_file.description == "Read file contents"
-        assert sample_tool_file.zone == Zone.ZONE_A
+        assert sample_tool_file.need_auth is False
         assert sample_tool_file.type == ToolType.FILE
     
     def test_tool_to_dict(self, sample_tool_file):
@@ -61,7 +55,7 @@ class TestTool:
         tool_dict = sample_tool_file.to_dict()
         
         assert tool_dict["name"] == "read_file"
-        assert tool_dict["zone"] == "A"
+        assert tool_dict["need_auth"] is False
         assert tool_dict["type"] == "file"
         assert "parameters" in tool_dict
         assert "metadata" in tool_dict
@@ -71,7 +65,7 @@ class TestTool:
         tool = Tool(
             name="complex_tool",
             description="Tool with parameters",
-            zone=Zone.ZONE_B,
+            need_auth=False,
             type=ToolType.FILE,
             parameters={
                 "path": {"type": "string", "required": True},
@@ -89,7 +83,7 @@ class TestTool:
         tool = Tool(
             name="test_tool",
             description="Test",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE,
             metadata={
                 "timeout": 30,
@@ -208,7 +202,7 @@ class TestMessage:
             sender_id="assistant_001",
             sender_name="Assistant",
             content="I'll read the file for you.",
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         
         assert msg.sender_name == "Assistant"
@@ -221,7 +215,7 @@ class TestMessage:
             sender_id="user_001",
             sender_name="User",
             content="Test message",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             metadata={"source": "cli", "priority": "high"}
         )
         
@@ -297,7 +291,7 @@ class TestAuthorizationModels:
             operation_type="file_delete",
             tool_name="delete_file",
             description="Delete important file: /data/important.txt",
-            created_at=datetime.utcnow()
+            created_at=datetime.now(timezone.utc)
         )
         
         assert auth_req.id == "auth_1"
@@ -310,7 +304,7 @@ class TestAuthorizationModels:
             auth_request_id="auth_1",
             user_id="admin_001",
             approved=True,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             comment="Verified user identity"
         )
         
@@ -323,9 +317,14 @@ class TestAuthorizationModels:
             auth_request_id="auth_2",
             user_id="admin_001",
             approved=False,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             comment="Suspicious operation, access denied"
         )
         
         assert auth_resp.approved is False
         assert "denied" in auth_resp.comment.lower()
+
+
+
+
+

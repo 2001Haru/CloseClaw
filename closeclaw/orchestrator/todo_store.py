@@ -1,7 +1,7 @@
-"""Run-scoped TODO store for Phase5 P3."""
+﻿"""Run-scoped TODO store for Phase5 P3."""
 
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 @dataclass
@@ -22,7 +22,7 @@ class TodoStore:
         self._items: dict[str, TodoItem] = {}
 
     def upsert(self, item_id: str, title: str, status: str, source_step: int) -> TodoItem:
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         item = TodoItem(
             id=item_id,
             title=title,
@@ -47,3 +47,4 @@ class TodoStore:
 
     def export_snapshot(self) -> list[dict]:
         return [asdict(item) for item in self.list_items()]
+

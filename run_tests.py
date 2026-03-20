@@ -1,5 +1,5 @@
-#!/usr/bin/env python3
-"""快速测试启动脚本."""
+﻿#!/usr/bin/env python3
+"""Quick test runner utility."""
 
 import subprocess
 import sys
@@ -7,15 +7,15 @@ from pathlib import Path
 
 
 def run_tests(args=None):
-    """运行 pytest 测试."""
-    
-    # 默认参数
+    """Run pytest test suites."""
+
+    # Default parameters
     cmd = ["pytest", "tests/", "-v"]
     
     if args:
         cmd.extend(args)
     
-    print(f"🧪 运行测试: {' '.join(cmd)}")
+    print(f"Running tests: {' '.join(cmd)}")
     print("-" * 60)
     
     result = subprocess.run(cmd)
@@ -23,7 +23,7 @@ def run_tests(args=None):
 
 
 def run_coverage():
-    """生成覆盖率报告."""
+    """Generate coverage report."""
     cmd = [
         "pytest", "tests/",
         "--cov=closeclaw",
@@ -32,22 +32,22 @@ def run_coverage():
         "-v"
     ]
     
-    print("📊 生成覆盖率报告...")
+    print("Generating coverage report...")
     print("-" * 60)
     
     result = subprocess.run(cmd)
     
     if result.returncode == 0:
-        print("\n✅ 覆盖率报告已生成: htmlcov/index.html")
+        print("\nCoverage report generated: htmlcov/index.html")
     
     return result.returncode
 
 
 def run_specific_test(test_name):
-    """运行特定测试."""
+    """Run a specific test file."""
     cmd = ["pytest", f"tests/{test_name}", "-v", "-s"]
     
-    print(f"🔍 运行特定测试: {test_name}")
+    print(f"Running specific test: {test_name}")
     print("-" * 60)
     
     result = subprocess.run(cmd)
@@ -55,11 +55,11 @@ def run_specific_test(test_name):
 
 
 def main():
-    """主函数."""
+    """Main entry point."""
     import argparse
     
     parser = argparse.ArgumentParser(
-        description="CloseClaw Phase 1 测试运行器"
+        description="CloseClaw test runner"
     )
     
     parser.add_argument(
@@ -68,29 +68,29 @@ def main():
         choices=["all", "coverage", "types", "config", "middleware", 
                 "tools", "safety", "agent", "integration", "quick"],
         default="all",
-        help="要运行的测试命令"
+        help="Test command to run"
     )
     
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
-        help="详细输出"
+        help="Verbose output"
     )
     
     parser.add_argument(
         "-s", "--show-output",
         action="store_true",
-        help="显示打印输出"
+        help="Show print output"
     )
     
     parser.add_argument(
         "-k", "--keyword",
-        help="按关键字过滤测试"
+        help="Filter tests by keyword"
     )
     
     args = parser.parse_args()
     
-    # 构建 pytest 参数
+    # Build pytest args
     pytest_args = []
     
     if args.verbose:
@@ -102,7 +102,7 @@ def main():
     if args.keyword:
         pytest_args.extend(["-k", args.keyword])
     
-    # 执行对应命令
+    # Execute selected command
     if args.command == "all":
         return run_tests(pytest_args)
     
@@ -110,14 +110,15 @@ def main():
         return run_coverage()
     
     elif args.command == "quick":
-        print("⚡ 快速测试 (仅关键路径)...")
+        print("Quick test run (critical paths only)...")
         return run_tests(pytest_args + ["-m", "not slow"])
     
     else:
-        # 特定模块测试
+        # Specific module test
         test_file = f"test_{args.command}.py"
         return run_tests(pytest_args + [f"tests/{test_file}"])
 
 
 if __name__ == "__main__":
     sys.exit(main())
+

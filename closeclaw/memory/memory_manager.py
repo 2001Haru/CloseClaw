@@ -1,4 +1,4 @@
-"""Memory Manager for Phase 4 Step 3.
+﻿"""Memory Manager for Phase 4 Step 3.
 
 Implements SQLite-based long-term memory with hybrid search:
 - Vector search (Semantic) using FastEmbed + K-NN
@@ -64,8 +64,11 @@ class MemoryManager:
             embedding_model_name: Name of the FastEmbed model to use
             use_gpu: Whether to use GPU for embedding generation (if available)
         """
-        self.workspace_root = workspace_root
-        self.db_path = os.path.join(workspace_root, db_name)
+        self.workspace_root = os.path.abspath(workspace_root)
+        # Persist memory database under workspace_root/memory to avoid polluting
+        # project root when cwd-based execution paths are used.
+        self.memory_dir = os.path.join(self.workspace_root, "memory")
+        self.db_path = os.path.join(self.memory_dir, db_name)
         self.embedding_model_name = embedding_model_name
         
         # Initialize embedding model lazily
@@ -95,7 +98,7 @@ class MemoryManager:
 
     def _init_db(self) -> None:
         """Initialize SQLite database schema."""
-        os.makedirs(self.workspace_root, exist_ok=True)
+        os.makedirs(self.memory_dir, exist_ok=True)
         
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()

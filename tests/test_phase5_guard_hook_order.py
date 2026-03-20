@@ -1,6 +1,6 @@
-"""P2-A regression tests for orchestrator guard/hook wiring and execution order."""
+﻿"""P2-A regression tests for orchestrator guard/hook wiring and execution order."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -64,7 +64,7 @@ async def test_engine_guard_hook_execution_order():
             sender_id="user",
             sender_name="User",
             content="test",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         ),
         budget=RunBudget(max_steps=2),
     )
@@ -121,7 +121,7 @@ async def test_engine_pre_act_guard_can_short_circuit():
             sender_id="user",
             sender_name="User",
             content="test",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         ),
         budget=RunBudget(max_steps=2),
     )
@@ -155,3 +155,8 @@ async def test_engine_pre_act_guard_can_short_circuit():
 
     assert output["response"] == "blocked by guard"
     assert trace == ["planner"]
+
+
+
+
+

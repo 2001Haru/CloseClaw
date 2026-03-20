@@ -1,12 +1,12 @@
-"""Tests for agent core loop."""
+﻿"""Tests for agent core loop."""
 
 import pytest
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from closeclaw.agents.core import AgentCore, LLMProvider
 from closeclaw.types import (
-    AgentState, Zone, ToolType, Tool, Session,
+    AgentState,  ToolType, Tool, Session,
     Message, ToolCall, ToolResult, AuthorizationRequest,
     AuthorizationResponse
 )
@@ -168,7 +168,7 @@ class TestAgentMessage:
         read_file = Tool(
             name="read_file",
             description="Read file",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE
         )
         agent.register_tool(read_file)
@@ -185,7 +185,7 @@ class TestAgentMessage:
             sender_id="user_456",
             sender_name="User",
             content="Read /data/test.txt",
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         
         # Set current session
@@ -199,10 +199,10 @@ class TestAuthorization:
     """Test authorization handling."""
     
     @pytest.mark.asyncio
-    async def test_zone_c_requires_auth(self, sample_agent_config, mock_llm,
+    async def test_sensitive_tool_requires_auth(self, sample_agent_config, mock_llm,
                                        temp_workspace):
-        """Test Zone C operations require authorization."""
-        from closeclaw.middleware import MiddlewareChain, ZoneBasedPermission
+        """Test Sensitive operations require authorization."""
+        from closeclaw.middleware import MiddlewareChain, AuthPermissionMiddleware
         
         agent = AgentCore(
             agent_id="agent_001",
@@ -214,7 +214,7 @@ class TestAuthorization:
         
         # Set up middleware chain for auth checks
         chain = MiddlewareChain()
-        chain.add_middleware(ZoneBasedPermission())
+        chain.add_middleware(AuthPermissionMiddleware())
         agent.set_middleware_chain(chain)
         
         async def mock_handler(**kwargs):
@@ -223,7 +223,7 @@ class TestAuthorization:
         delete_tool = Tool(
             name="delete_file",
             description="Delete file",
-            zone=Zone.ZONE_C,
+            need_auth=True,
             type=ToolType.FILE,
             handler=mock_handler
         )
@@ -319,7 +319,7 @@ class TestToolExecution:
     @pytest.mark.asyncio
     async def test_execute_safe_tool(self, sample_agent_config, mock_llm, 
                                     temp_workspace, sample_tool_file):
-        """Test executing safe (Zone A) tool."""
+        """Test executing safe (Safe) tool."""
         agent = AgentCore(
             agent_id="agent_001",
             llm_provider=mock_llm,
@@ -469,7 +469,7 @@ class TestAgentErrorHandling:
             sender_id="user_456",
             sender_name="User",
             content="Test",
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         
         agent.current_session = session
@@ -499,7 +499,7 @@ class TestAgentErrorHandling:
         failing_tool = Tool(
             name="failing_tool",
             description="Fails",
-            zone=Zone.ZONE_A,
+            need_auth=False,
             type=ToolType.FILE,
             handler=failing_handler
         )
@@ -549,7 +549,7 @@ class TestAgentIntegration:
             sender_id="user_456",
             sender_name="User",
             content="What is the capital of France?",
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         
         agent.current_session = session
@@ -579,7 +579,7 @@ class TestCompactMemoryPromptInjection:
                 sender_id="user_1",
                 sender_name="User",
                 content="New request",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
             )
         ]
 
@@ -606,7 +606,7 @@ class TestCompactMemoryPromptInjection:
                 sender_id="user_1",
                 sender_name="User",
                 content="Please remember this context",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
             ),
             Message(
                 id="a1",
@@ -614,7 +614,7 @@ class TestCompactMemoryPromptInjection:
                 sender_id=agent.agent_id,
                 sender_name="Agent",
                 content="Latest assistant summary before compression.",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
             ),
         ]
 
@@ -675,7 +675,7 @@ class TestMemoryFlushTrigger:
                 sender_id="user_1",
                 sender_name="User",
                 content="x" * 40,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
             ))
 
         with patch.object(agent.context_manager, "check_thresholds", return_value=("WARNING", True)):
@@ -686,7 +686,7 @@ class TestMemoryFlushTrigger:
                     sender_id="user_1",
                     sender_name="User",
                     content="new request",
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc),
                 ))
 
         assert result is not None
@@ -729,7 +729,7 @@ class TestCriticalContextFallback:
                 sender_id=sender_id,
                 sender_name=sender_name,
                 content="x" * 120,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
             ))
 
         result = await agent.process_message(Message(
@@ -738,7 +738,7 @@ class TestCriticalContextFallback:
             sender_id="user_1",
             sender_name="User",
             content="trigger critical",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         ))
 
         assert result is not None
@@ -784,7 +784,7 @@ class TestContextGuardFlushIdempotency:
             description="Read file",
             handler=read_handler,
             type=ToolType.FILE,
-            zone=Zone.ZONE_A,
+            need_auth=False,
             parameters={"path": {"type": "string"}},
         ))
 
@@ -797,7 +797,12 @@ class TestContextGuardFlushIdempotency:
                         sender_id="user_1",
                         sender_name="User",
                         content="new request",
-                        timestamp=datetime.utcnow(),
+                        timestamp=datetime.now(timezone.utc),
                     ))
 
         assert flush_mock.await_count == 1
+
+
+
+
+

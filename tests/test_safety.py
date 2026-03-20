@@ -1,13 +1,13 @@
-"""Tests for safety audit system."""
+﻿"""Tests for safety audit system."""
 
 import pytest
 import json
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from closeclaw.safety import AuditLogger
-from closeclaw.types import Zone, ToolType, Tool
+from closeclaw.types import ToolType, Tool
 
 
 class TestAuditLogger:
@@ -361,3 +361,8 @@ class TestAuditMetrics:
         if Path(log_path).exists():
             logs = logger.read_logs(limit=5)
             assert len(logs) <= 5
+
+
+
+
+

@@ -1,4 +1,4 @@
-"""Tests for channel system (Phase 3).
+﻿"""Tests for channel system (Phase 3).
 
 Tests:
 - BaseChannel interface compliance
@@ -11,7 +11,7 @@ Tests:
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
+from datetime import datetime, timezone
 
 from closeclaw.types import Message, ChannelType, AuthorizationResponse
 from closeclaw.channels.base import BaseChannel
@@ -387,3 +387,8 @@ class TestChannelExports:
     def test_feishu_getter(self):
         from closeclaw.channels import get_feishu_channel
         assert callable(get_feishu_channel)
+
+
+
+
+

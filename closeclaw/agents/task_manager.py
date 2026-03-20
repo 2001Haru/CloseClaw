@@ -1,4 +1,4 @@
-"""Background task manager for long-running async operations.
+﻿"""Background task manager for long-running async operations.
 
 TaskManager handles:
 1. Creating async background tasks (asyncio.create_task)
@@ -10,14 +10,14 @@ Design:
 - Synchronous API (easy to integrate with sync main loop)
 - Wraps asyncio.create_task() for background execution
 - Non-blocking polling mechanism
-- Task status tracking: pending → running → completed/failed/cancelled
+- Task status tracking: pending -> running -> completed/failed/cancelled
 """
 
 import asyncio
 import json
 import logging
 from typing import Any, Optional, Callable, Dict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..types import BackgroundTask, TaskStatus
@@ -36,14 +36,8 @@ class TaskManager:
         """
         self.state_file = state_file
         self.task_counter = 0
-        
-        # Active tasks: task_id -> asyncio.Task
         self.active_tasks: Dict[str, asyncio.Task] = {}
-        
-        # Completed results: task_id -> (status, result, error)
         self.completed_results: Dict[str, BackgroundTask] = {}
-        
-        # Tool handlers registry: tool_name -> callable
         self.tool_handlers: Dict[str, Callable] = {}
     
     def register_tool_handler(self, tool_name: str, handler: Callable) -> None:
@@ -60,22 +54,15 @@ class TaskManager:
                          tool_name: str, 
                          arguments: Dict[str, Any],
                          expires_after: int = 3600) -> str:
-        """Create a new background task.
+        """Create and start a background task.
         
         Args:
             tool_name: Name of the tool to execute
             arguments: Arguments to pass to the tool
             expires_after: Task expiration time in seconds (default: 1 hour)
-        
+
         Returns:
             task_id: Unique task identifier (format: "#001", "#002", etc.)
-        
-        Flow:
-            1. Generate task_id
-            2. Create BackgroundTask object
-            3. Create asyncio.Task via create_task()
-            4. Store in active_tasks
-            5. Return task_id immediately
         """
         # Generate task_id
         self.task_counter += 1
@@ -87,7 +74,7 @@ class TaskManager:
             tool_name=tool_name,
             tool_arguments=arguments,
             status=TaskStatus.PENDING,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
             expires_after=expires_after,
         )
         
@@ -105,7 +92,7 @@ class TaskManager:
             """Execute tool in background and track status."""
             try:
                 task_obj.status = TaskStatus.RUNNING
-                task_obj.started_at = datetime.utcnow()
+                task_obj.started_at = datetime.now(timezone.utc)
                 
                 logger.info(f"[{task_id}] Starting: {tool_name}")
                 
@@ -115,20 +102,20 @@ class TaskManager:
                 # Store result
                 task_obj.status = TaskStatus.COMPLETED
                 task_obj.result = result
-                task_obj.completed_at = datetime.utcnow()
+                task_obj.completed_at = datetime.now(timezone.utc)
                 
                 logger.info(f"[{task_id}] Completed: {tool_name}")
                 
             except asyncio.CancelledError:
                 task_obj.status = TaskStatus.CANCELLED
                 task_obj.error = "Task cancelled"
-                task_obj.completed_at = datetime.utcnow()
+                task_obj.completed_at = datetime.now(timezone.utc)
                 logger.warning(f"[{task_id}] Cancelled: {tool_name}")
                 
             except Exception as e:
                 task_obj.status = TaskStatus.FAILED
                 task_obj.error = str(e)
-                task_obj.completed_at = datetime.utcnow()
+                task_obj.completed_at = datetime.now(timezone.utc)
                 logger.error(f"[{task_id}] Error: {tool_name}: {e}")
             
             finally:
@@ -371,7 +358,7 @@ class TaskManager:
         
         Use case: Prevent state.json from growing unbounded
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired_count = 0
         
         to_remove = []
@@ -386,3 +373,4 @@ class TaskManager:
             logger.debug(f"Cleaned up expired task: {task_id}")
         
         return expired_count
+

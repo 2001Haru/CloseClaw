@@ -1,4 +1,4 @@
-"""Minimal PLAN/ACT/OBSERVE/DECIDE engine for Phase5 P1."""
+﻿"""Minimal PLAN/ACT/OBSERVE/DECIDE engine for Phase5 P1."""
 
 from typing import Awaitable, Callable
 
@@ -66,3 +66,4 @@ class OrchestratorEngine:
             "memory_flushed": False,
             "decision": "budget_exhausted",
         }
+

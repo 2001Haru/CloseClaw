@@ -1,7 +1,7 @@
-"""Safety module (audit logging and compliance)."""
+﻿"""Safety module (audit logging and compliance)."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 import json
 
@@ -11,8 +11,9 @@ logger = logging.getLogger(__name__)
 class AuditLogger:
     """Audit log for all operations."""
     
-    def __init__(self, log_file: str = "audit.log"):
-        self.log_file = log_file
+    def __init__(self, log_file: str = "audit.log", log_path: Optional[str] = None):
+        # Keep log_path for backward compatibility with older call sites.
+        self.log_file = log_path or log_file
     
     def log(self, 
             event_type: str,
@@ -34,7 +35,7 @@ class AuditLogger:
             error: Error message if failed
         """
         entry = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": event_type,
             "status": status,
             "user_id": user_id,
@@ -66,7 +67,69 @@ class AuditLogger:
         
         return logs[-limit:]
 
+    def log_tool_execution(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        user_id: str,
+        session_id: str,
+        success: bool,
+        duration_ms: Optional[int] = None,
+    ) -> None:
+        status = "success" if success else "error"
+        result = f"session_id={session_id}, duration_ms={duration_ms}"
+        self.log(
+            event_type="tool_call",
+            status=status,
+            user_id=user_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            result=result,
+            error=None if success else "tool execution failed",
+        )
+
+    def log_authorization_decision(
+        self,
+        tool_name: str,
+        user_id: str,
+        session_id: str,
+        approved: bool,
+        approver_id: str,
+        reason: Optional[str] = None,
+    ) -> None:
+        self.log(
+            event_type="auth_response",
+            status="approved" if approved else "rejected",
+            user_id=user_id,
+            tool_name=tool_name,
+            arguments={"session_id": session_id, "approver_id": approver_id},
+            result=reason,
+        )
+
+    def log_policy_violation(
+        self,
+        tool_name: str,
+        user_id: str,
+        session_id: str,
+        violation_type: str,
+        description: str,
+        severity: str = "medium",
+    ) -> None:
+        self.log(
+            event_type="blocked",
+            status="blocked",
+            user_id=user_id,
+            tool_name=tool_name,
+            arguments={
+                "session_id": session_id,
+                "violation_type": violation_type,
+                "severity": severity,
+            },
+            error=description,
+        )
+
 
 __all__ = [
     "AuditLogger",
 ]
+

@@ -1,11 +1,10 @@
-"""Embedded CLI channel - Interactive terminal-based channel.
+﻿"""Embedded CLI channel - Interactive terminal-based channel.
 
 Shares the same AgentCore instance with other channels.
 Provides stdin/stdout based message exchange and HITL confirmation.
 
 From Planning.md:
-  "本地 CLI 实现：嵌入式 CLI 驱动，与 Server 共享同一个 AgentCore 实例，
-   通过 asyncio.gather 同时启动 Server 和 CLI 循环。"
+  "鏈湴 CLI 瀹炵幇锛氬祵鍏ュ紡 CLI 椹卞姩锛屼笌 Server 鍏变韩鍚屼竴涓?AgentCore 瀹炰緥锛?   閫氳繃 asyncio.gather 鍚屾椂鍚姩 Server 鍜?CLI 寰幆銆?
 """
 
 import asyncio
@@ -105,7 +104,7 @@ class CLIChannel(BaseChannel):
         
         Handles different response types:
         - "response": Normal agent reply
-        - "auth_request": Zone C HITL confirmation
+        - "auth_request": need_auth HITL confirmation
         - "task_completed": Background task result notification
         - "error": Error message
         """
@@ -120,12 +119,12 @@ class CLIChannel(BaseChannel):
             if tool_calls:
                 for tc in tool_calls:
                     name = tc.get("name", "unknown") if isinstance(tc, dict) else str(tc)
-                    print(f"  {Colors.DIM}🔧 Tool: {name}{Colors.RESET}")
+                    print(f"  {Colors.DIM}[TOOL] {name}{Colors.RESET}")
             
             if tool_results:
                 for tr in tool_results:
                     status = tr.get("status", "unknown") if isinstance(tr, dict) else str(tr)
-                    icon = "✅" if status == "success" else "⏳" if status == "task_created" else "❌"
+                    icon = "[OK]" if status == "success" else ("[TASK]" if status == "task_created" else "[ERR]")
                     print(f"  {Colors.DIM}{icon} Result: {status}{Colors.RESET}")
             
             # Show main response
@@ -140,7 +139,7 @@ class CLIChannel(BaseChannel):
             result = response.get("result", "")
             error = response.get("error")
             
-            print(f"\n{Colors.MAGENTA}📬 Background Task Completed{Colors.RESET}")
+            print(f"\n{Colors.MAGENTA}Background Task Completed{Colors.RESET}")
             print(f"  Task: {task_id} | Status: {status}")
             if error:
                 print(f"  {Colors.RED}Error: {error}{Colors.RESET}")
@@ -153,7 +152,7 @@ class CLIChannel(BaseChannel):
         
         elif resp_type == "error":
             error = response.get("error", "Unknown error")
-            print(f"{Colors.RED}❌ Error: {error}{Colors.RESET}\n")
+            print(f"{Colors.RED}Error: {error}{Colors.RESET}\n")
         
         else:
             print(f"{Colors.GRAY}[{resp_type}] {response}{Colors.RESET}\n")
@@ -164,9 +163,9 @@ class CLIChannel(BaseChannel):
                                 description: str,
                                 diff_preview: Optional[str] = None) -> None:
         """Display HITL confirmation in terminal."""
-        print(f"\n{Colors.YELLOW}{'═' * 60}{Colors.RESET}")
-        print(f"{Colors.YELLOW}{Colors.BOLD}⚠️  Zone C Operation — Authorization Required{Colors.RESET}")
-        print(f"{Colors.YELLOW}{'═' * 60}{Colors.RESET}")
+        print(f"\n{Colors.YELLOW}{'=' * 60}{Colors.RESET}")
+        print(f"{Colors.YELLOW}{Colors.BOLD}Sensitive Operation - Authorization Required{Colors.RESET}")
+        print(f"{Colors.YELLOW}{'=' * 60}{Colors.RESET}")
         print(f"  Tool: {Colors.BOLD}{tool_name}{Colors.RESET}")
         print(f"  Description: {description}")
         
@@ -180,7 +179,7 @@ class CLIChannel(BaseChannel):
                 else:
                     print(f"  {Colors.GRAY}{line}{Colors.RESET}")
         
-        print(f"{Colors.YELLOW}{'─' * 60}{Colors.RESET}")
+        print(f"{Colors.YELLOW}{'-' * 60}{Colors.RESET}")
     
     async def wait_for_auth_response(self,
                                       auth_request_id: str,
@@ -196,18 +195,18 @@ class CLIChannel(BaseChannel):
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
-            print(f"  {Colors.RED}⏰ Authorization timed out.{Colors.RESET}")
+            print(f"  {Colors.RED}Authorization timed out.{Colors.RESET}")
             return None
         except (EOFError, KeyboardInterrupt):
-            print(f"\n  {Colors.RED}❌ Authorization cancelled.{Colors.RESET}")
+            print(f"\n  {Colors.RED}Authorization cancelled.{Colors.RESET}")
             return None
         
         approved = answer.strip().lower() in ("y", "yes", "")
         
         if approved:
-            print(f"  {Colors.GREEN}✅ Approved{Colors.RESET}\n")
+            print(f"  {Colors.GREEN}Approved{Colors.RESET}\n")
         else:
-            print(f"  {Colors.RED}❌ Rejected{Colors.RESET}\n")
+            print(f"  {Colors.RED}Rejected{Colors.RESET}\n")
         
         return AuthorizationResponse(
             auth_request_id=auth_request_id,
@@ -236,9 +235,11 @@ class CLIChannel(BaseChannel):
     def _print_banner(self) -> None:
         """Print startup banner."""
         print(f"""
-{Colors.CYAN}{'═' * 60}
-  CloseClaw — Interactive CLI Mode
+{Colors.CYAN}{'=' * 60}
+    CloseClaw - Interactive CLI Mode
   Type your message and press Enter.
   Commands: /exit, /quit
-{'═' * 60}{Colors.RESET}
+{'=' * 60}{Colors.RESET}
 """)
+
+
