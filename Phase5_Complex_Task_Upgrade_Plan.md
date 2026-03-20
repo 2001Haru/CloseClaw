@@ -9,7 +9,23 @@
 
 1. P0 设计冻结：已完成
 2. P1 Orchestrator MVP：已完成
-3. P2-P4：未开始
+3. P2-A Guard/Hook 骨架：已完成（2026-03-19）
+4. P2-B 触发迁移（Context->Guard + run 幂等）：已完成（2026-03-19）
+5. P3-A Progress/Todo 基础设施：已完成（2026-03-19）
+6. P3-B no-progress 强制 replan（先 plan_update 再终止）：已完成（2026-03-19）
+7. P4 子任务接口预留（types + registry + docs + tests）：已完成（2026-03-19）
+
+P2/P3/P4 开工判定（2026-03-19）：
+
+1. 结论：**可以开工**，建议按 P2 -> P3 -> P4 顺序推进。
+2. 理由：
+  - 单主循环已稳定（P1/P1.5 完成）。
+  - 关键回归（同轮收束、授权续跑、记忆压缩路径）已有覆盖。
+  - 最新 CRITICAL 硬截断与 compact memory 强化已落地，可作为 P2 统一 Guard 触发的稳定基线。
+3. 开工前硬门禁（建议 0.5 天内完成核验）：
+  - 所有 Phase5 相关测试在当前分支全绿。
+  - 运行时无双路径触发 flush/compact（日志抽样确认）。
+  - 回滚入口保持可用（版本回退脚本或稳定 tag 可直接恢复）。
 
 ---
 
@@ -654,6 +670,7 @@ while True:
 4. `closeclaw/orchestrator/policies.py`
 - 实现 `plan_next_action()`。
 - 支持“工具后必须进入一次总结候选生成”的策略。
+- 注明：以上策略因为架构矛盾已被废弃
 
 5. `tests/test_phase5_recall_same_turn.py`
 - 用固定 mock 场景验证 Case-001。
@@ -697,6 +714,159 @@ while True:
 
 4. `tests/test_phase5_progress_guard.py`
 - 验证无进展触发重规划和终止门禁。
+
+## 18.4 P4 任务看板（接口预留，不做执行引擎）
+
+1. `closeclaw/orchestrator/subtask_types.py`
+- 定义 `SubtaskSpec`、`SubtaskHandle`、`SubtaskStatus`、`SubtaskResult`。
+- 明确最小字段：`subtask_id/parent_run_id/intent/input_payload/status/created_at/updated_at`。
+
+2. `closeclaw/orchestrator/subtask_registry.py`
+- 提供内存态 registry（注册、查询、状态迁移、结果写回）。
+- 仅单进程内可用，不引入跨进程/分布式语义。
+
+3. `docs/phase5_subtask_interface.md`
+- 冻结 spawn/wait/cancel 接口语义和错误码。
+- 定义与主循环边界：P4 不直接改变 ACT 执行器。
+
+4. `tests/test_phase5_subtask_registry.py`
+- 覆盖状态流转与错误场景（不存在 subtask、重复完成、非法迁移）。
+
+---
+
+## 21. P2/P3/P4 详细建设计划（可直接执行）
+
+## 21.1 总体节奏与并行策略
+
+1. 顺序建议：P2 完成后再进入 P3，P3 稳定后再做 P4。
+2. 并行边界：
+- 可并行：文档、测试脚手架、Telemetry 字段预埋。
+- 禁止并行：P2 Guard 改造与 P3 决策逻辑重构（避免互相污染基线）。
+3. 每阶段结束必须满足：
+- 单测与集成测试通过。
+- 与 P1.5 关键行为不回归（同轮收束、授权后自动续跑）。
+
+## 21.2 P2 详细计划（Guard/Hook 融合，预计 3-5 天）
+
+目标：将 context pressure、flush、compact、recall 的触发权统一收敛到 Orchestrator Guard/Hook。
+
+### 交付拆分
+
+1. D1-D2：接口冻结
+- 新增 `closeclaw/orchestrator/guards.py`：
+  - `PrePlanContextGuard`
+  - `PreActBudgetGuard`
+  - `PostActSafetyGuard`
+- 新增 `closeclaw/orchestrator/hooks.py`：
+  - `BeforePlanHook`
+  - `AfterObserveHook`
+
+2. D2-D3：触发迁移
+- `closeclaw/agents/core.py` 中将 context 检测与 flush 触发改为 guard 调用。
+- 保留兼容桥（短期），并增加日志标识 `guard_path=true|false`。
+
+3. D3-D4：重复触发消除
+- 增加 run 级幂等标记：`flush_triggered_in_run`、`compact_triggered_in_run`。
+- CRITICAL 路径保持硬规则：仅保留最近 10 轮。
+
+4. D4-D5：测试与回归
+- 新增：
+  - `tests/test_phase5_context_pressure_flow.py`
+  - `tests/test_phase5_guard_idempotency.py`
+  - `tests/test_phase5_guard_hook_order.py`
+
+### P2 验收门禁
+
+1. WARNING 阶段最多触发一次 flush（同 run 内）。
+2. CRITICAL 阶段无条件触发硬截断并输出用户可见 warning。
+3. 不出现“旧路径触发 + Guard 再触发”的双触发日志。
+
+## 21.3 P3 详细计划（复杂任务增强，预计 5-8 天）
+
+目标：让长链路任务在同一主循环里可追踪、可判定进展、可重规划、可终止。
+
+### 交付拆分
+
+1. D1-D2：结构化 plan_update
+- 定义 `plan_update` payload schema：
+  - `goal`
+  - `current_step`
+  - `remaining_steps`
+  - `done_criteria`
+  - `risk`
+
+2. D2-D4：Progress 引擎
+- 新增 `closeclaw/orchestrator/progress.py`：
+  - `compute_progress_delta(prev_state, new_observation)`
+  - `stagnation_count` 累加规则
+  - `replan_required` 判定
+
+3. D4-D5：Todo 状态存储
+- 新增 `closeclaw/orchestrator/todo_store.py`：
+  - run 级 todo 生命周期
+  - 与 `RunState.metadata` 对齐
+
+4. D5-D6：策略接入
+- `closeclaw/orchestrator/policies.py` 增加：
+  - no-progress -> 强制 `plan_update`
+  - 连续超限 -> 安全终止并给出用户解释
+
+5. D6-D8：测试与压测
+- 新增：
+  - `tests/test_phase5_progress_guard.py`
+  - `tests/test_phase5_plan_update_schema.py`
+  - `tests/test_phase5_no_progress_replan.py`
+  - `tests/test_phase5_long_run_stability.py`
+
+### P3 验收门禁
+
+1. 连续 N 步无进展（默认 N=2）时必须触发重规划或终止。
+2. 复杂任务日志可回放（可还原每步 action/observation/decision）。
+3. 不引入新的平行主循环。
+
+## 21.4 P4 详细计划（子任务接口预留，预计 2-3 天）
+
+目标：只冻结接口与状态机，不引入真正的并发子任务执行。
+
+### 交付拆分
+
+1. D1：接口定义
+- `spawn_subtask(spec)`
+- `wait_subtask(handle)`
+- `cancel_subtask(handle)`
+
+2. D1-D2：registry 落地（内存态）
+- 提供最小生命周期：`created -> running -> completed|failed|cancelled`。
+- 校验非法迁移并输出统一错误码。
+
+3. D2-D3：文档与测试
+- 新增接口文档与兼容性约束。
+- 增加 registry 单测，不改动当前 ACT 执行路径。
+
+### P4 验收门禁
+
+1. 接口契约稳定，不影响 P1/P2/P3 行为。
+2. Registry 生命周期与错误码测试全通过。
+3. 主循环仍保持单线程串行语义。
+
+## 21.5 风险与止损机制（P2-P4）
+
+1. 风险：Guard 改造导致线上触发顺序变化。
+- 止损：保留阶段性兼容桥 + 日志分桶对比（guard_path）。
+
+2. 风险：P3 进展判定误杀正常任务。
+- 止损：阈值可配置，先在 allowlist 会话灰度。
+
+3. 风险：P4 接口过早侵入执行器。
+- 止损：P4 明确“不接入执行引擎”，仅 registry + spec。
+
+## 21.6 建议 PR 切分（对应 P2-P4）
+
+1. PR-6（P2-A）：guards/hooks 基础骨架 + 空实现 + 单测脚手架。
+2. PR-7（P2-B）：context pressure 迁移 + flush/compact 幂等。
+3. PR-8（P3-A）：plan_update schema + progress 引擎。
+4. PR-9（P3-B）：todo_store + no-progress 重规划策略。
+5. PR-10（P4）：subtask interface spec + registry + 单测。
 
 ---
 

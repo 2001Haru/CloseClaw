@@ -16,7 +16,22 @@ from ..tools.adaptation import ToolAdaptationLayer
 from ..safety import AuditLogger
 from ..context import ContextManager, MessageCompactor
 from ..memory import MemoryFlushCoordinator, MemoryFlushSession, MemoryManager
-from ..orchestrator import Action, Decision, Observation, OrchestratorEngine, PlanPolicy, RunBudget, RunState
+from ..orchestrator import (
+    Action,
+    AfterObserveHook,
+    BeforePlanHook,
+    Decision,
+    Observation,
+    OrchestratorEngine,
+    PlanPolicy,
+    ProgressPolicy,
+    PostActSafetyGuard,
+    PreActBudgetGuard,
+    PreActContextGuard,
+    RunBudget,
+    RunState,
+    TodoStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +151,17 @@ class AgentCore:
         # Phase 5: Single-loop orchestrator (MVP)
         self.orchestrator_engine = OrchestratorEngine()
         self.plan_policy = PlanPolicy()
+        phase5_cfg = self.config.metadata.get("phase5", {})
+        self.progress_policy = ProgressPolicy(no_progress_limit=int(phase5_cfg.get("no_progress_limit", 2)))
+        self.orchestrator_guards = [
+            PreActBudgetGuard(),
+            PreActContextGuard(pre_act_callback=self._phase5_pre_act_context_guard),
+            PostActSafetyGuard(),
+        ]
+        self.orchestrator_hooks = [
+            BeforePlanHook(),
+            AfterObserveHook(),
+        ]
         self._phase5_auth_paused_runs: dict[str, RunState] = {}
         
         # Register retrieve_memory tool
@@ -228,13 +254,16 @@ class AgentCore:
         """
         self.message_history.append(message)
 
-        # Trigger Phase4 memory flush before planning when context is at WARNING threshold.
-        await self._maybe_trigger_memory_flush_before_planning()
-
         run_state = RunState(
             run_id=f"run_{int(datetime.utcnow().timestamp() * 1000)}",
             user_message=message,
             budget=RunBudget(max_steps=self._phase5_max_steps()),
+            metadata={
+                "stagnation_count": 0,
+                "force_replan": False,
+                "stop_after_replan": False,
+                "todo_store": TodoStore(),
+            },
         )
 
         def _phase5_serialize_tool_result(tool_result: ToolResult) -> str:
@@ -310,6 +339,38 @@ class AgentCore:
                 confidence=1.0,
             )
 
+        def _build_structured_plan_update_payload(state: RunState, reason: str) -> dict[str, Any]:
+            todo_store = state.metadata.get("todo_store")
+            if isinstance(todo_store, TodoStore):
+                todo_store.upsert(
+                    item_id="replan_root",
+                    title="Recover progress after repeated non-success tool results",
+                    status="blocked",
+                    source_step=state.step_id,
+                )
+                todo_snapshot = todo_store.export_snapshot()
+            else:
+                todo_snapshot = []
+
+            return {
+                "goal": "Recover progress and prevent repeated no-op tool loops",
+                "current_step": f"replan_required:{reason}",
+                "remaining_steps": [
+                    "inspect_latest_tool_errors",
+                    "choose_alternative_action_or_parameters",
+                    "execute_single_high-confidence_step",
+                ],
+                "done_criteria": [
+                    "at least one successful tool_result",
+                    "stagnation_count reset to 0",
+                ],
+                "risk": [
+                    "tool unavailable or blocked repeatedly",
+                    "context pressure causing low-quality plans",
+                ],
+                "todo_snapshot": todo_snapshot,
+            }
+
         async def actor(state: RunState, action: Action) -> Observation:
             if action.type == "tool_call":
                 tool_call: ToolCall = action.payload["tool_call"]
@@ -334,7 +395,10 @@ class AgentCore:
             return Observation(
                 kind="plan_update",
                 status="success",
-                data={"text": action.payload.get("text", "Plan updated.")},
+                data={
+                    "text": action.payload.get("text") or json.dumps(action.payload, ensure_ascii=False),
+                    "payload": action.payload,
+                },
             )
 
         def observer(state: RunState, action: Action, observation: Observation) -> RunState:
@@ -369,6 +433,19 @@ class AgentCore:
                         },
                     )
 
+                if tool_result.status == "success":
+                    state.metadata["stagnation_count"] = 0
+                elif tool_result.status in {"error", "blocked", "task_created"}:
+                    state.metadata["stagnation_count"] = int(state.metadata.get("stagnation_count", 0)) + 1
+                    if self.progress_policy.should_stop(state):
+                        state.metadata["replan_payload"] = _build_structured_plan_update_payload(
+                            state,
+                            reason="no_progress_limit_reached",
+                        )
+                        state.metadata["force_replan"] = True
+                        state.metadata["stop_after_replan"] = True
+                        return Decision(stop=False, reason="force_replan")
+
                 if state.pending_actions:
                     return Decision(stop=False, reason="continue_pending_actions")
 
@@ -378,6 +455,22 @@ class AgentCore:
                 return Decision(stop=False, reason="tool_success_continue")
 
             if observation.kind in {"final_answer", "plan_update"}:
+                if observation.kind == "plan_update" and state.metadata.get("stop_after_replan", False):
+                    state.metadata["stop_after_replan"] = False
+                    return Decision(
+                        stop=True,
+                        reason="no_progress_limit_reached",
+                        output={
+                            "response": "I stopped this run after generating a recovery plan because no meaningful progress was made.",
+                            "plan_update": observation.data.get("payload", {}),
+                            "tool_calls": [tc.to_dict() for tc in state.tool_calls],
+                            "tool_results": [tr.to_dict() for tr in state.tool_results],
+                            "requires_auth": False,
+                            "memory_flushed": False,
+                            "decision": "no_progress_limit_reached",
+                        },
+                    )
+
                 response_text = observation.data.get("text") or self._phase5_fallback_summary(state)
                 return Decision(
                     stop=True,
@@ -393,7 +486,15 @@ class AgentCore:
 
             return Decision(stop=False, reason="continue")
 
-        output = await self.orchestrator_engine.run(run_state, planner, actor, observer, decider)
+        output = await self.orchestrator_engine.run(
+            run_state,
+            planner,
+            actor,
+            observer,
+            decider,
+            guards=self.orchestrator_guards,
+            hooks=self.orchestrator_hooks,
+        )
 
         if self._critical_trim_notice_pending:
             warning_text = (
@@ -415,6 +516,21 @@ class AgentCore:
         ))
 
         return output
+
+    async def _phase5_pre_act_context_guard(self, state: RunState, action: Action) -> Optional[Any]:
+        """P2-B: run-scoped context pressure hook invoked by PreActContextGuard."""
+        if state.metadata.get("context_guard_checked", False):
+            return None
+
+        state.metadata["context_guard_checked"] = True
+        prior_session_id = self.memory_flush_coordinator.last_flush_session_id
+        await self._maybe_trigger_memory_flush_before_planning()
+
+        new_session_id = self.memory_flush_coordinator.last_flush_session_id
+        if new_session_id and new_session_id != prior_session_id:
+            state.metadata["flush_triggered_in_run"] = True
+
+        return None
 
     async def _maybe_trigger_memory_flush_before_planning(self) -> None:
         """Execute memory flush when context reaches WARNING threshold."""

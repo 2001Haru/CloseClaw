@@ -744,3 +744,60 @@ class TestCriticalContextFallback:
         assert result is not None
         assert "[CONTEXT WARNING]" in result.get("response", "")
         assert len(agent.message_history) <= 21
+
+
+class TestContextGuardFlushIdempotency:
+    """P2-B regression: flush trigger should run at most once per run."""
+
+    @pytest.mark.asyncio
+    async def test_flush_triggered_once_per_run(self, sample_agent_config, temp_workspace):
+        class TwoStepLLM:
+            def __init__(self):
+                self.calls = 0
+
+            async def generate(self, messages, tools, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return (
+                        "step1",
+                        [ToolCall(tool_id="tc1", name="read_file", arguments={"path": "x"})],
+                    )
+                return "done", None
+
+        agent = AgentCore(
+            agent_id="agent_context_guard_idempotency",
+            llm_provider=TwoStepLLM(),
+            config=sample_agent_config,
+            workspace_root=temp_workspace,
+        )
+        agent.current_session = Session(
+            session_id="session_context_guard_idempotency",
+            user_id="user_1",
+            channel_type="cli",
+        )
+
+        async def read_handler(path: str):
+            return "ok"
+
+        agent.register_tool(Tool(
+            name="read_file",
+            description="Read file",
+            handler=read_handler,
+            type=ToolType.FILE,
+            zone=Zone.ZONE_A,
+            parameters={"path": {"type": "string"}},
+        ))
+
+        with patch.object(agent.context_manager, "check_thresholds", return_value=("WARNING", True)):
+            with patch.object(agent.memory_flush_session, "should_trigger_flush", return_value=True):
+                with patch.object(agent, "_execute_memory_flush_standalone", new_callable=AsyncMock) as flush_mock:
+                    await agent.process_message(Message(
+                        id="u_new",
+                        channel_type="cli",
+                        sender_id="user_1",
+                        sender_name="User",
+                        content="new request",
+                        timestamp=datetime.utcnow(),
+                    ))
+
+        assert flush_mock.await_count == 1

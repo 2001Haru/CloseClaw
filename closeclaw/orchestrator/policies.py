@@ -26,4 +26,20 @@ class PlanPolicy:
     """
 
     def next_action_after_observation(self, state: RunState) -> Optional[Action]:
+        if state.metadata.get("force_replan", False):
+            payload = state.metadata.get("replan_payload") or {
+                "goal": "Recover task progress and avoid repeated failures",
+                "current_step": "replan_required",
+                "remaining_steps": ["clarify", "retry_with_adjusted_plan"],
+                "done_criteria": ["at least one successful step"],
+                "risk": ["repeated tool failures"],
+            }
+            state.metadata["force_replan"] = False
+            return Action(
+                type="plan_update",
+                payload=payload,
+                reason="no_progress_forced_replan",
+                confidence=1.0,
+            )
+
         return None
