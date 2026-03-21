@@ -16,6 +16,9 @@ from tabulate import tabulate
 import yaml
 
 from ..agents.task_manager import TaskManager
+from ..config import ConfigLoader
+from ..heartbeat import HeartbeatService
+from ..cron import CronService, CronSchedule
 from ..mcp import MCPClientPool
 from ..mcp.transport import MCPHttpClient, MCPStdioClient
 from ..types import TaskStatus
@@ -333,4 +336,135 @@ class MCPStatusManager:
 
         rows.sort(key=lambda x: x["server_id"])
         return tabulate(rows, headers="keys", tablefmt="grid")
+
+
+class CLIHeartbeatManager:
+    """CLI manager for heartbeat trigger/status operations."""
+
+    def __init__(self, config_file: Path = Path("config.yaml")) -> None:
+        self.config_file = config_file
+
+    def _load_config(self):
+        return ConfigLoader.load(str(self.config_file))
+
+    async def trigger_once(self) -> dict[str, Any]:
+        """Trigger one heartbeat tick and return result payload."""
+        config = self._load_config()
+
+        async def _execute(tasks: str) -> dict[str, Any]:
+            # S2 scaffold: keep CLI trigger safe and side-effect-free.
+            return {
+                "status": "noop",
+                "tasks_preview": tasks[:200],
+                "note": "Heartbeat trigger CLI scaffold; execution adapter lands in subsequent S2/S3 slices.",
+            }
+
+        service = HeartbeatService(
+            workspace_root=config.workspace_root,
+            enabled=config.heartbeat.enabled,
+            interval_s=config.heartbeat.interval_s,
+            on_execute=_execute,
+            notify_enabled=False,
+        )
+
+        tick = await service.trigger_now()
+        return {
+            "action": tick.action,
+            "status": tick.status,
+            "reason": tick.reason,
+            "tasks": tick.tasks,
+            "result": tick.result,
+        }
+
+    def get_status(self) -> dict[str, Any]:
+        """Return heartbeat runtime configuration and file readiness."""
+        config = self._load_config()
+        heartbeat_file = Path(config.workspace_root) / "HEARTBEAT.md"
+        return {
+            "enabled": config.heartbeat.enabled,
+            "interval_s": config.heartbeat.interval_s,
+            "quiet_hours_enabled": config.heartbeat.quiet_hours.enabled,
+            "queue_busy_guard_enabled": config.heartbeat.queue_busy_guard.enabled,
+            "notify_enabled": config.heartbeat.notify.enabled,
+            "heartbeat_file": str(heartbeat_file),
+            "heartbeat_file_exists": heartbeat_file.exists(),
+            "target_ttl_s": config.heartbeat.routing.target_ttl_s,
+        }
+
+
+class CLICronManager:
+    """CLI manager for cron add/list/remove/enable/disable/run-now operations."""
+
+    def __init__(self, config_file: Path = Path("config.yaml")) -> None:
+        self.config_file = config_file
+
+    def _load_config(self):
+        return ConfigLoader.load(str(self.config_file))
+
+    def _build_service(self) -> CronService:
+        config = self._load_config()
+        store_path = Path(config.workspace_root) / config.cron.store_file
+        return CronService(
+            store_file=str(store_path.resolve()),
+            enabled=True,
+            default_timezone=config.cron.default_timezone,
+            on_job=None,
+        )
+
+    def add_job(
+        self,
+        *,
+        job_id: str,
+        kind: str,
+        message: str,
+        at_ms: int | None,
+        every_ms: int | None,
+        expr: str | None,
+        tz: str | None,
+        deliver: bool,
+        channel: str,
+        to: str,
+    ) -> dict[str, Any]:
+        service = self._build_service()
+        schedule = CronSchedule(kind=kind, at_ms=at_ms, every_ms=every_ms, expr=expr, tz=tz or "UTC")
+        job = service.add_job(
+            job_id=job_id,
+            schedule=schedule,
+            message=message,
+            deliver=deliver,
+            channel=channel,
+            to=to,
+        )
+        return job.to_dict()
+
+    def list_jobs(self) -> list[dict[str, Any]]:
+        service = self._build_service()
+        return [job.to_dict() for job in service.list_jobs()]
+
+    def remove_job(self, job_id: str) -> bool:
+        service = self._build_service()
+        return service.remove_job(job_id)
+
+    def set_enabled(self, job_id: str, enabled: bool) -> bool:
+        service = self._build_service()
+        return service.set_enabled(job_id, enabled)
+
+    async def run_now(self, job_id: str) -> dict[str, Any]:
+        async def _noop(job):
+            return {
+                "status": "noop",
+                "job_id": job.id,
+                "message_preview": job.message[:200],
+            }
+
+        config = self._load_config()
+        store_path = Path(config.workspace_root) / config.cron.store_file
+        service = CronService(
+            store_file=str(store_path.resolve()),
+            enabled=True,
+            default_timezone=config.cron.default_timezone,
+            on_job=_noop,
+        )
+        result = await service.run_now(job_id)
+        return result or {"status": "noop", "job_id": job_id}
 

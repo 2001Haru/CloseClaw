@@ -16,6 +16,7 @@ import asyncio
 import logging
 import sys
 from typing import Any, Optional
+from pathlib import Path
 
 from .config import ConfigLoader, CloseCrawlConfig, ChannelConfig
 from .agents import AgentCore
@@ -24,6 +25,8 @@ from .agents.llm_providers import create_llm_provider
 from .channels import CLIChannel, get_telegram_channel, get_feishu_channel
 from .channels.base import BaseChannel
 from .middleware import MiddlewareChain, SafetyGuard, PathSandbox, AuthPermissionMiddleware
+from .heartbeat import HeartbeatService
+from .cron import CronService
 from .tools.base import get_registered_tools
 from .types import AgentConfig, ContextManagementSettings, LLMSettings
 
@@ -298,13 +301,55 @@ async def run_agent(config_path: str, llm_provider: Any = None) -> None:
         logger.error("No channels enabled. Please enable at least one channel in config.yaml")
         return
     
+    async def _heartbeat_execute(tasks: str) -> dict[str, Any]:
+        # S1 MVP: keep heartbeat execution side-effect-free until direct-turn adapter lands in S2/S3.
+        logger.info("Heartbeat run requested (S1 MVP noop execute), tasks_preview=%s", tasks[:120])
+        return {"status": "noop", "tasks": tasks}
+
+    async def _heartbeat_notify(payload: Any) -> None:
+        logger.info("Heartbeat notify (S1 MVP): %s", str(payload)[:200])
+
+    heartbeat_service = HeartbeatService(
+        workspace_root=config.workspace_root,
+        enabled=config.heartbeat.enabled,
+        interval_s=config.heartbeat.interval_s,
+        on_execute=_heartbeat_execute,
+        on_notify=_heartbeat_notify,
+        notify_enabled=config.heartbeat.notify.enabled,
+        quiet_hours_enabled=config.heartbeat.quiet_hours.enabled,
+        quiet_hours_timezone=config.heartbeat.quiet_hours.timezone,
+        quiet_hours_ranges=config.heartbeat.quiet_hours.ranges,
+        queue_busy_guard_enabled=config.heartbeat.queue_busy_guard.enabled,
+        max_queue_size=config.heartbeat.queue_busy_guard.max_queue_size,
+        target_ttl_s=config.heartbeat.routing.target_ttl_s,
+        fallback_channel=config.heartbeat.routing.fallback_channel,
+        fallback_chat_id=config.heartbeat.routing.fallback_chat_id,
+    )
+
+    async def _on_cron_job(job):
+        logger.info("Cron job triggered id=%s message=%s", job.id, job.message[:120])
+        return {"status": "noop", "job_id": job.id}
+
+    cron_service = CronService(
+        store_file=str((Path(config.workspace_root) / config.cron.store_file).resolve()),
+        enabled=config.cron.enabled,
+        default_timezone=config.cron.default_timezone,
+        on_job=_on_cron_job,
+    )
+
+    await heartbeat_service.start()
+    await cron_service.start()
+
     logger.info(f"Starting {len(channels)} channel(s) via asyncio.gather()")
-    
-    # Run all channels concurrently
-    tasks = [run_channel(agent, ch, config) for ch in channels]
-    await asyncio.gather(*tasks, return_exceptions=True)
-    
-    logger.info("All channels stopped. Agent shutting down.")
+
+    try:
+        # Run all channels concurrently
+        tasks = [run_channel(agent, ch, config) for ch in channels]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        logger.info("All channels stopped. Agent shutting down.")
+    finally:
+        await cron_service.stop()
+        await heartbeat_service.stop()
 
 
 class _PlaceholderLLM:

@@ -151,6 +151,97 @@ class Phase5Config:
 
 
 @dataclass
+class HeartbeatQuietHoursConfig:
+    """Heartbeat quiet-hours gate configuration."""
+    enabled: bool = False
+    timezone: str = "UTC"
+    ranges: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "timezone": self.timezone,
+            "ranges": self.ranges,
+        }
+
+
+@dataclass
+class HeartbeatQueueBusyGuardConfig:
+    """Heartbeat queue busy guard configuration."""
+    enabled: bool = False
+    max_queue_size: int = 100
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "max_queue_size": self.max_queue_size,
+        }
+
+
+@dataclass
+class HeartbeatRoutingConfig:
+    """Heartbeat routing stabilization configuration."""
+    target_ttl_s: int = 1800
+    fallback_channel: str = "cli"
+    fallback_chat_id: str = "direct"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target_ttl_s": self.target_ttl_s,
+            "fallback_channel": self.fallback_channel,
+            "fallback_chat_id": self.fallback_chat_id,
+        }
+
+
+@dataclass
+class HeartbeatNotifyConfig:
+    """Heartbeat notify behavior configuration."""
+    enabled: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+        }
+
+
+@dataclass
+class HeartbeatConfig:
+    """Heartbeat configuration (Phase 6)."""
+    enabled: bool = True
+    interval_s: int = 1800
+    quiet_hours: HeartbeatQuietHoursConfig = field(default_factory=HeartbeatQuietHoursConfig)
+    queue_busy_guard: HeartbeatQueueBusyGuardConfig = field(default_factory=HeartbeatQueueBusyGuardConfig)
+    routing: HeartbeatRoutingConfig = field(default_factory=HeartbeatRoutingConfig)
+    notify: HeartbeatNotifyConfig = field(default_factory=HeartbeatNotifyConfig)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "interval_s": self.interval_s,
+            "quiet_hours": self.quiet_hours.to_dict(),
+            "queue_busy_guard": self.queue_busy_guard.to_dict(),
+            "routing": self.routing.to_dict(),
+            "notify": self.notify.to_dict(),
+        }
+
+
+@dataclass
+class CronConfig:
+    """Cron configuration (Phase 6)."""
+
+    enabled: bool = False
+    store_file: str = "cron_jobs.json"
+    default_timezone: str = "UTC"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "store_file": self.store_file,
+            "default_timezone": self.default_timezone,
+        }
+
+
+@dataclass
 class CloseCrawlConfig:
     """Main CloseClaw configuration."""
     agent_id: str = "closeclaw-agent"
@@ -167,6 +258,8 @@ class CloseCrawlConfig:
     interaction_log_file: str = "interaction.md"
     context_management: ContextManagementConfig = field(default_factory=ContextManagementConfig)
     phase5: Phase5Config = field(default_factory=Phase5Config)
+    heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
+    cron: CronConfig = field(default_factory=CronConfig)
     
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -184,6 +277,8 @@ class CloseCrawlConfig:
             "interaction_log_file": self.interaction_log_file,
             "context_management": self.context_management.to_dict(),
             "phase5": self.phase5.to_dict(),
+            "heartbeat": self.heartbeat.to_dict(),
+            "cron": self.cron.to_dict(),
         }
 
 
@@ -376,6 +471,41 @@ class ConfigLoader:
                 session_allowlist=p5_rollout_raw.get("session_allowlist", []),
             ),
         )
+
+        hb_raw = raw_config.get("heartbeat", {})
+        hb_quiet_raw = hb_raw.get("quiet_hours", {})
+        hb_queue_raw = hb_raw.get("queue_busy_guard", {})
+        hb_routing_raw = hb_raw.get("routing", {})
+        hb_notify_raw = hb_raw.get("notify", {})
+
+        heartbeat = HeartbeatConfig(
+            enabled=hb_raw.get("enabled", True),
+            interval_s=hb_raw.get("interval_s", 1800),
+            quiet_hours=HeartbeatQuietHoursConfig(
+                enabled=hb_quiet_raw.get("enabled", False),
+                timezone=hb_quiet_raw.get("timezone", "UTC"),
+                ranges=hb_quiet_raw.get("ranges", []),
+            ),
+            queue_busy_guard=HeartbeatQueueBusyGuardConfig(
+                enabled=hb_queue_raw.get("enabled", False),
+                max_queue_size=hb_queue_raw.get("max_queue_size", 100),
+            ),
+            routing=HeartbeatRoutingConfig(
+                target_ttl_s=hb_routing_raw.get("target_ttl_s", 1800),
+                fallback_channel=hb_routing_raw.get("fallback_channel", "cli"),
+                fallback_chat_id=hb_routing_raw.get("fallback_chat_id", "direct"),
+            ),
+            notify=HeartbeatNotifyConfig(
+                enabled=hb_notify_raw.get("enabled", False),
+            ),
+        )
+
+        cron_raw = raw_config.get("cron", {})
+        cron = CronConfig(
+            enabled=cron_raw.get("enabled", False),
+            store_file=cron_raw.get("store_file", "cron_jobs.json"),
+            default_timezone=cron_raw.get("default_timezone", "UTC"),
+        )
         
         # Main config
         agent_raw = raw_config.get("agent", {})
@@ -396,6 +526,8 @@ class ConfigLoader:
             interaction_log_file=raw_config.get("interaction_log_file", "interaction.md"),
             context_management=context_management,
             phase5=phase5,
+            heartbeat=heartbeat,
+            cron=cron,
         )
         
         return config

@@ -14,6 +14,14 @@ CLI_SUBCOMMANDS = {
     "cancel",
     "summary",
     "mcp-health",
+    "heartbeat-trigger",
+    "heartbeat-status",
+    "cron-add",
+    "cron-list",
+    "cron-remove",
+    "cron-enable",
+    "cron-disable",
+    "cron-run-now",
 }
 
 

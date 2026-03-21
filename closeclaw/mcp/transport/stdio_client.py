@@ -130,8 +130,14 @@ class MCPStdioClient:
             except asyncio.TimeoutError as exc:
                 stderr_text = ""
                 if self._process.stderr is not None:
-                    stderr_bytes = await self._process.stderr.read()
-                    stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+                    try:
+                        stderr_bytes = await asyncio.wait_for(
+                            self._process.stderr.read(),
+                            timeout=0.2,
+                        )
+                        stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+                    except Exception:
+                        stderr_text = "<stderr unavailable>"
                 raise RuntimeError(
                     f"Timed out waiting for MCP stdio response. stderr={stderr_text!r}"
                 ) from exc
