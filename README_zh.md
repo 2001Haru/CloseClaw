@@ -3,7 +3,7 @@
 [EN](README.md) | [中文](README_zh.md)
 
 <p align="center">
-  <b>轻量 • 安全优先 • 强大 Agent</b>
+  <h1>轻量 • 安全优先 • 强大 Agent</h1>
 </p>
 
 <p align="center">

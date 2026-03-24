@@ -3,7 +3,7 @@
 [EN](README.md) | [中文](README_zh.md)
 
 <p align="center">
-  <b>Lightweight • Security-Focused • Practical Agent Runtime</b>
+  <h1>Lightweight • Security-Focused • Practical Agent Runtime</h1>
 </p>
 
 <p align="center">
