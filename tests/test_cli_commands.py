@@ -479,6 +479,16 @@ safety:
         assert "providers" in snapshot
         assert snapshot["summary"]["active_provider"] in {"openai", "openai-compatible"}
 
+    def test_provider_health_manager_named_ollama(self, temp_config_file):
+        from closeclaw.cli.commands import CLIProviderHealthManager
+
+        manager = CLIProviderHealthManager(config_file=temp_config_file)
+        snapshot = manager.get_health("ollama")
+
+        assert snapshot["summary"]["total"] == 1
+        assert snapshot["providers"][0]["provider"] == "ollama"
+        assert snapshot["providers"][0]["runtime"] == "ollama"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

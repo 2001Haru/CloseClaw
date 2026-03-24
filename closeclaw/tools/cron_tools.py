@@ -61,7 +61,7 @@ def _parse_wake_time_to_ms(wake_time: str) -> int:
         },
         "channel": {
             "type": "string",
-            "description": "Target channel for wake-up delivery (cli/telegram/feishu)"
+            "description": "Target channel for wake-up delivery (cli/telegram/feishu/discord/whatsapp/qq)"
         },
         "to": {
             "type": "string",
@@ -98,9 +98,9 @@ async def call_cron_impl(
 
     target_channel = (channel or "").strip().lower()
     if not target_channel:
-        raise ValueError("channel is required (cli/telegram/feishu)")
+        raise ValueError("channel is required (cli/telegram/feishu/discord/whatsapp/qq)")
 
-    allowed_channels = {"cli", "telegram", "feishu"}
+    allowed_channels = {"cli", "telegram", "feishu", "discord", "whatsapp", "qq"}
     if target_channel not in allowed_channels:
         raise ValueError(f"unsupported channel: {target_channel}. allowed={sorted(allowed_channels)}")
 

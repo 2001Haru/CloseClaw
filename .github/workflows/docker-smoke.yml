@@ -1,0 +1,39 @@
+name: Docker Smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".dockerignore"
+      - ".env.example"
+      - "tests/test_docker.sh"
+      - "closeclaw/**"
+      - "pyproject.toml"
+  push:
+    branches:
+      - main
+    paths:
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".dockerignore"
+      - ".env.example"
+      - "tests/test_docker.sh"
+      - "closeclaw/**"
+      - "pyproject.toml"
+
+jobs:
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure smoke script is executable
+        run: chmod +x tests/test_docker.sh
+
+      - name: Run Docker smoke test
+        run: tests/test_docker.sh

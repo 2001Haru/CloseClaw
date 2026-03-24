@@ -2,7 +2,6 @@
 __pycache__/
 *.py[cod]
 *$py.class
-docs/
 
 # C extensions
 *.so
@@ -42,6 +41,7 @@ venv.bak/
 
 # Configuration files
 config.yaml
+.env
 *.local
 
 # State and logs

@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "closeclaw"
-version = "0.1.0"
+version = "1.12.0"
 description = "A lightweight and safe Python Agent framework"
 readme = "README.md"
 license = {text = "MIT"}
@@ -28,6 +28,7 @@ dependencies = [
     "pydantic>=2.0",
     "httpx>=0.24.0",
     "pyyaml>=6.0",
+    "tabulate>=0.9.0",
     "tiktoken>=0.5.0",
     "fastembed>=0.2.0",
     "numpy>=1.24.0",
@@ -50,6 +51,15 @@ telegram = [
 ]
 feishu = [
     "feishu-sdk>=1.0.0",
+]
+discord = [
+    "discord.py>=2.3.0",
+]
+whatsapp = [
+    "websockets>=11.0",
+]
+qq = [
+    "qq-botpy>=1.2.1",
 ]
 fastapi = [
     "fastapi>=0.104.0",

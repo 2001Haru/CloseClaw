@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from .litellm_provider import LiteLLMProvider
+from .ollama import OllamaProvider
 from .openai_compatible import OpenAICompatibleProvider
 from .registry import find_provider_spec
 
@@ -46,6 +47,16 @@ def create_llm_provider(
             model=model,
             provider=spec.name,
             api_base=base_url,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+        )
+
+    if spec.runtime == "ollama":
+        logger.info("Using Ollama provider runtime for provider=%s model=%s", spec.name, model)
+        return OllamaProvider(
+            model=model,
+            base_url=_resolve_base_url("ollama", base_url),
             temperature=temperature,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,

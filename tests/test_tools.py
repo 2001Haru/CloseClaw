@@ -444,6 +444,35 @@ class TestCronTools:
         finally:
             set_runtime_cron_service(None)
 
+    @pytest.mark.asyncio
+    async def test_call_cron_allows_discord_without_to(self):
+        from closeclaw.cron import CronService, set_runtime_cron_service
+        from closeclaw.tools.cron_tools import call_cron_impl
+
+        class _NoopStore:
+            def load(self):
+                return {}
+
+            def save(self, _jobs):
+                return None
+
+        service = CronService(store_file="unused.json", enabled=True)
+        service._store = _NoopStore()  # type: ignore[attr-defined]
+        set_runtime_cron_service(service)
+
+        try:
+            wake_ms = int(time.time() * 1000) + 60_000
+            result = await call_cron_impl(
+                str(wake_ms),
+                "discord wake",
+                channel="discord",
+            )
+            assert result["scheduled"] is True
+            assert result["channel"] == "discord"
+            assert result["to"] == "direct"
+        finally:
+            set_runtime_cron_service(None)
+
 
 class TestSpawnTools:
     @pytest.mark.asyncio

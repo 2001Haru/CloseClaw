@@ -9,6 +9,13 @@ llm:  # LLM provider settings.
   api_key: "sk-XXXXXXXXXXXXXXXX"  # API key used for model requests.
   base_url: "https://api.openai.com/v1"  # API endpoint base URL.
   # For gemini/anthropic provider ids, install optional deps first: pip install -e ".[providers]"
+  # For ollama provider id, local default base_url is: http://localhost:11434
+
+  # Example (local Ollama):
+  # provider: "ollama"
+  # model: "llama3.1"
+  # api_key: ""  # ollama does not require api_key by default
+  # base_url: "http://localhost:11434"
 
   temperature: 0.0  # Sampling temperature; 0 is deterministic.
   max_tokens: 5000  # Max output tokens per LLM response.
@@ -147,7 +154,7 @@ orchestrator:  # Orchestrator behavior controls.
 heartbeat:  # Periodic heartbeat worker (reads CloseClaw Memory/HEARTBEAT.md and executes decisions).
   enabled: true  # Master switch for heartbeat loop.
   interval_s: 1800  # Seconds between heartbeat ticks.
-
+  
   quiet_hours:  # Optional time-window gate.
     enabled: false  # Skip heartbeat during quiet hours.
     timezone: "UTC+08:00"  # Timezone used for quiet-hour range parsing.

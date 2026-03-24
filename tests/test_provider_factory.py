@@ -1,6 +1,7 @@
 import pytest
 
 from closeclaw.providers.factory import create_llm_provider
+from closeclaw.providers.ollama import OllamaProvider
 from closeclaw.providers.openai_compatible import OpenAICompatibleProvider
 from closeclaw.providers.registry import find_provider_spec
 
@@ -15,6 +16,23 @@ def test_registry_uses_model_keyword_when_provider_missing():
     spec = find_provider_spec("", "gemini-2.5-flash")
     assert spec.name == "gemini"
     assert spec.runtime == "litellm"
+
+
+def test_registry_recognizes_explicit_ollama_provider():
+    spec = find_provider_spec("ollama", "llama3.1")
+    assert spec.name == "ollama"
+    assert spec.runtime == "ollama"
+
+
+def test_factory_returns_dedicated_ollama_provider():
+    provider = create_llm_provider(
+        provider="ollama",
+        model="llama3.1",
+        api_key="",
+        base_url="",
+    )
+
+    assert isinstance(provider, OllamaProvider)
 
 
 def test_factory_returns_openai_compatible_provider_for_openai_compatible():

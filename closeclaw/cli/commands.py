@@ -679,6 +679,9 @@ class CLIProviderHealthManager:
         if runtime == "litellm":
             ok = importlib.util.find_spec("litellm") is not None
             return ok, "litellm"
+        if runtime == "ollama":
+            ok = importlib.util.find_spec("httpx") is not None
+            return ok, "httpx (ollama)"
         if runtime == "openai_compatible":
             ok = importlib.util.find_spec("httpx") is not None
             return ok, "httpx"

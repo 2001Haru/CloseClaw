@@ -1,6 +1,6 @@
 ﻿"""CloseClaw - A lightweight and safe Python Agent framework."""
 
-__version__ = "0.1.0"
+__version__ = "1.12.0"
 
 from .agents import AgentCore, LLMProvider
 from .config import CloseCrawlConfig, ConfigLoader

@@ -1,5 +1,5 @@
 ---
-name: complex-task-workflow
+name: complex_task
 description: Workflow for handling multi-step and complex tasks using a Todo-Driven approach.
 metadata: {"closeclaw": {"always": true}}
 ---

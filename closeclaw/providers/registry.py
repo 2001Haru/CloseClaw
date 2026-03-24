@@ -9,12 +9,13 @@ from dataclasses import dataclass
 class ProviderSpec:
     name: str
     model_keywords: tuple[str, ...]
-    runtime: str  # "openai_compatible" | "litellm"
+    runtime: str  # "openai_compatible" | "litellm" | "ollama"
 
 
 PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
     ProviderSpec(name="openai-compatible", model_keywords=("gpt", "openai", "deepseek"), runtime="openai_compatible"),
     ProviderSpec(name="openai", model_keywords=("gpt", "openai"), runtime="openai_compatible"),
+    ProviderSpec(name="ollama", model_keywords=("ollama",), runtime="ollama"),
     ProviderSpec(name="gemini", model_keywords=("gemini",), runtime="litellm"),
     ProviderSpec(name="anthropic", model_keywords=("claude", "anthropic"), runtime="litellm"),
 )

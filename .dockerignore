@@ -1,0 +1,32 @@
+# Git and editor
+.git
+.gitignore
+.vscode/
+
+# Python cache/build artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local runtime data
+CloseClaw Memory/
+runtime-data/
+workspace/
+
+# Test/cache artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+
+# Node artifacts if present
+node_modules/
