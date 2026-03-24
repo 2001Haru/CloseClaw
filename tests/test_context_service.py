@@ -166,7 +166,7 @@ def test_repair_transcript_drops_orphan_tool_result():
     assert not any(m.get("tool_call_id") == "orphan" for m in repaired)
 
 
-def test_serialize_tool_result_covers_success_auth_and_error():
+def test_serialize_tool_result_covers_success_auth_task_and_error():
     service = ContextService(
         context_manager=object(),
         message_compactor=object(),
@@ -179,10 +179,16 @@ def test_serialize_tool_result_covers_success_auth_and_error():
 
     success = ToolResult(tool_call_id="t1", status="success", result={"ok": True})
     auth = ToolResult(tool_call_id="t2", status="auth_required", result=None)
-    error = ToolResult(tool_call_id="t3", status="error", result=None, error="boom")
+    task = ToolResult(
+        tool_call_id="t3",
+        status="task_created",
+        result={"task_id": "#001", "message": "Long-running task created: #001"},
+    )
+    error = ToolResult(tool_call_id="t4", status="error", result=None, error="boom")
 
     assert "ok" in service.serialize_tool_result(success)
     assert "authorization" in service.serialize_tool_result(auth).lower()
+    assert "task created" in service.serialize_tool_result(task).lower()
     assert "boom" in service.serialize_tool_result(error)
 
 

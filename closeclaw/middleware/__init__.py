@@ -6,6 +6,7 @@ from typing import Any, Optional
 import re
 from datetime import datetime, timezone
 
+from ..safety import SecurityMode, normalize_security_mode, build_auth_reason, ConsensusGuardian
 from ..types import Tool, Session, OperationType, ToolType
 
 logger = logging.getLogger(__name__)
@@ -114,11 +115,23 @@ class PathSandbox(Middleware):
             return {"status": "allow"}
         
         import os
-        
+
+        # Not all FILE-type tools are path-based (e.g. spawn/task_status).
+        # Only normalize/sandbox when the call explicitly carries a path field.
+        if "path" not in arguments:
+            return {"status": "allow"}
+
         file_path = arguments.get("path", "")
-        
-        # Convert relative to absolute
-        abs_path = os.path.abspath(file_path)
+
+        # Normalize relative paths against workspace root instead of process cwd.
+        # This keeps file tool behavior deterministic no matter where the process is started.
+        if os.path.isabs(file_path):
+            abs_path = os.path.abspath(file_path)
+        else:
+            abs_path = os.path.abspath(os.path.join(self.workspace_root, file_path))
+
+        # Rewrite argument in-place so downstream tool handlers use the normalized path.
+        arguments["path"] = abs_path
         
         # Check if path is within workspace_root
         try:
@@ -146,13 +159,19 @@ class AuthPermissionMiddleware(Middleware):
     def __init__(
         self,
         default_need_auth: bool = False,
+        security_mode: str | SecurityMode = SecurityMode.SUPERVISED,
+        consensus_guardian: Optional[ConsensusGuardian] = None,
     ):
         """Initialize permission middleware.
 
         Args:
             default_need_auth: Default auth behavior when no hints are provided.
+            security_mode: One of autonomous/supervised/consensus.
+            consensus_guardian: Sentinel reviewer for consensus mode.
         """
         self.default_need_auth = default_need_auth
+        self.security_mode = normalize_security_mode(security_mode)
+        self.consensus_guardian = consensus_guardian
     
     async def process(self,
                      tool: Tool,
@@ -164,33 +183,88 @@ class AuthPermissionMiddleware(Middleware):
 
         requires_auth = getattr(tool, "need_auth", self.default_need_auth)
 
-        if requires_auth:
-            # Generate diff preview for FILE type operations
-            diff_preview = None
-            if tool.type == ToolType.FILE and arguments.get("operation") in ["write", "delete"]:
-                diff_preview = self._generate_diff_preview(tool, arguments)
-            
-            auth_id = f"auth_{datetime.now(timezone.utc).timestamp()}"
-            auth_request = {
-                "id": auth_id,
-                "tool_name": tool.name,
-                "user_id": session.user_id if session else user_id,
-                "description": f"{tool.name}: {tool.description}",
-                "arguments": arguments,
-                "operation_type": arguments.get("operation", "unknown"),
-                "diff_preview": diff_preview,
-            }
+        if not requires_auth:
+            return {"status": "allow"}
+
+        # Generate diff preview for FILE type operations
+        diff_preview = None
+        if tool.type == ToolType.FILE:
+            diff_preview = self._generate_diff_preview(tool, arguments)
+
+        reason = build_auth_reason(
+            tool_name=tool.name,
+            tool_description=tool.description,
+            arguments=arguments,
+            diff_preview=diff_preview,
+        )
+
+        if self.security_mode == SecurityMode.AUTONOMOUS:
             return {
-                "status": "requires_auth",
-                "auth_request_id": auth_id,
-                "auth_request": auth_request,
-                "tool_name": tool.name,
-                "arguments": arguments,
-                "operation_type": arguments.get("operation", "unknown"),
-                "description": f"{tool.name}: {tool.description}",
-                "diff_preview": diff_preview,
+                "status": "allow",
+                "auth_mode": self.security_mode.value,
+                "reason": reason,
             }
-        
+
+        if self.security_mode == SecurityMode.CONSENSUS:
+            if self.consensus_guardian is None:
+                return {
+                    "status": "block",
+                    "reason": "Consensus mode requires a configured guardian reviewer.",
+                    "reason_code": "GUARDIAN_NOT_CONFIGURED",
+                    "auth_mode": self.security_mode.value,
+                }
+
+            decision = await self.consensus_guardian.review(
+                {
+                    "tool_name": tool.name,
+                    "tool_description": tool.description,
+                    "arguments": arguments,
+                    "reason": reason,
+                    "diff_preview": diff_preview,
+                }
+            )
+            if not decision.approved:
+                return {
+                    "status": "block",
+                    "reason": decision.comment or "Consensus sentinel rejected this request.",
+                    "reason_code": decision.reason_code,
+                    "auth_mode": self.security_mode.value,
+                }
+
+            # Consensus mode is fully automated on approve: no manual auth step.
+            return {
+                "status": "allow",
+                "auth_mode": self.security_mode.value,
+                "reason": reason,
+                "reason_code": decision.reason_code,
+                "guardian_comment": decision.comment,
+            }
+
+        auth_id = f"auth_{datetime.now(timezone.utc).timestamp()}"
+        auth_request = {
+            "id": auth_id,
+            "tool_name": tool.name,
+            "user_id": session.user_id if session else user_id,
+            "description": f"{tool.name}: {tool.description}",
+            "arguments": arguments,
+            "operation_type": arguments.get("operation", "unknown"),
+            "diff_preview": diff_preview,
+            "reason": reason,
+            "auth_mode": self.security_mode.value,
+        }
+        return {
+            "status": "requires_auth",
+            "auth_request_id": auth_id,
+            "auth_request": auth_request,
+            "tool_name": tool.name,
+            "arguments": arguments,
+            "operation_type": arguments.get("operation", "unknown"),
+            "description": f"{tool.name}: {tool.description}",
+            "diff_preview": diff_preview,
+            "reason": reason,
+            "auth_mode": self.security_mode.value,
+        }
+
         return {"status": "allow"}
     
     def _generate_diff_preview(self,
@@ -208,11 +282,58 @@ class AuthPermissionMiddleware(Middleware):
         ```
         """
         try:
-            operation = arguments.get("operation", "unknown")
+            import os
+
+            tool_name = (tool.name or "").strip().lower()
+            operation = arguments.get("operation")
+            if not operation:
+                if tool_name in {"write_file", "edit_file"}:
+                    operation = "write"
+                elif tool_name in {"delete_file", "delete_lines"}:
+                    operation = "delete"
+                else:
+                    operation = "modify"
+
             path = arguments.get("path", "unknown")
-            
-            old_content = arguments.get("old_content", "")
-            new_content = arguments.get("new_content", "")
+
+            old_content = arguments.get("old_content")
+            new_content = arguments.get("new_content")
+
+            if old_content is None or new_content is None:
+                if tool_name == "write_file":
+                    new_content = str(arguments.get("content", ""))
+                    if isinstance(path, str) and os.path.exists(path):
+                        with open(path, "r", encoding="utf-8") as f:
+                            old_content = f.read()
+                    else:
+                        old_content = ""
+                elif tool_name == "edit_file":
+                    old_content = str(arguments.get("old_text", ""))
+                    new_content = str(arguments.get("new_text", ""))
+                elif tool_name == "delete_file":
+                    if isinstance(path, str) and os.path.exists(path):
+                        with open(path, "r", encoding="utf-8") as f:
+                            old_content = f.read()
+                    else:
+                        old_content = ""
+                    new_content = ""
+                elif tool_name == "delete_lines":
+                    old_content = ""
+                    if isinstance(path, str) and os.path.exists(path):
+                        start_line = int(arguments.get("start_line", 1))
+                        end_line = arguments.get("end_line")
+                        lines = []
+                        with open(path, "r", encoding="utf-8") as f:
+                            lines = f.read().splitlines()
+                        if lines:
+                            effective_end = int(end_line) if end_line is not None else start_line
+                            effective_end = min(effective_end, len(lines))
+                            if start_line <= effective_end and start_line >= 1:
+                                old_content = "\n".join(lines[start_line - 1:effective_end])
+                    new_content = ""
+
+            old_content = str(old_content or "")
+            new_content = str(new_content or "")
             
             # Generate simple diff
             old_lines = old_content.split("\n")[:5]  # Max 5 context lines
@@ -234,6 +355,10 @@ class AuthPermissionMiddleware(Middleware):
                         diff_lines.append(f"- {old[:80]}")
                     if new:
                         diff_lines.append(f"+ {new[:80]}")
+
+            if len(diff_lines) <= 2:
+                # Always provide non-empty preview context for sentinel review.
+                diff_lines.append("~ content preview unavailable; review path and operation metadata")
             
             diff_lines.append("-" * 50)
             return "\n".join(diff_lines)
@@ -271,6 +396,8 @@ class MiddlewareChain:
             ...
         }
         """
+        aggregated_allow: dict[str, Any] = {"status": "allow"}
+
         for middleware in self.middlewares:
             result = await middleware.process(
                 tool=tool,
@@ -283,8 +410,14 @@ class MiddlewareChain:
             # If any middleware blocks or requires auth, return immediately
             if result.get("status") in ["block", "requires_auth"]:
                 return result
+
+            if result.get("status") == "allow":
+                for key, value in result.items():
+                    if key == "status" or value is None:
+                        continue
+                    aggregated_allow[key] = value
         
-        return {"status": "allow"}
+        return aggregated_allow
     
     # Backwards-compatible alias expected by older tests and integrations
     async def execute(self,

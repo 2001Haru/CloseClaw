@@ -14,6 +14,8 @@ from datetime import datetime
 from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
 
+from .workspace_layout import DAILY_MEMORY_SUBDIR_REL, ensure_workspace_memory_layout
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,21 +30,26 @@ class MemoryFlushSession:
     
     def _generate_memory_flush_prompt(self) -> str:
         """Generate flush prompt with automatic execution requirement."""
-        return f"""[!!! CRITICAL ACTIVITY: CONTEXT COMPRESSION !!!]
+        return f"""[CRITICAL ACTIVITY: CONTEXT COMPRESSION]
 
 Your context window is almost full and will be compressed momentarily. You MUST flush key memories to persistent storage so they aren't lost.
 
-馃敶 CRITICAL PROCEDURE: READ BEFORE WRITE
+CRITICAL PROCEDURE: READ BEFORE WRITE
 
 You must NOT blindly write new memory files if similar topics already exist.
 
-馃搵 REQUIRED STEPS:
+REQUIRED STEPS:
+Find the folder "CloseClaw Memory/memory". The location of this folder is fixed and has been mentioned in the system prompt since the beginning.
+Then find the markdown file that is named with exactly the current date (i.e. "YYYY-MM-DD.md").
 
-1. IDENTIFY: Determine the 1-3 core subjects discussed.
-2. SEARCH: Call `search_memory` for each subject to see if we already have memories about this.
+1. IDENTIFY: Determine the core subjects discussed.
+2. READ: Read existing memory files "YYYY-MM-DD.md" in the folder to check their content.
 3. CONSOLIDATE/WRITE:
-   - If memories exist: Call `read_memory` to see their exact content, then use `write_memory_file` to update/overwrite them with combined information.
-   - If NO memories exist: Use `write_memory_file` to create new files (e.g., `{self.memory_dir}/memory_config.md`).
+    You MUST use the tool `write_memory_file` or `edit_memory_file` to overwrite or update memory files in this folder.
+   - If memories exist: Use `write_memory_file` or `edit_memory_file` to overwrite or update them with combined information. Record what has been discussed and decided in this session. Do NOT delete old files.
+   - If NO memories exist: Use `write_memory_file` to create new files. The filename must be the current date "YYYY-MM-DD.md". The content must be in Markdown format with clear headings and bullet points for important details.
+
+    After the above steps, find the file "MEMORY.md" in the folder "CloseClaw Memory". This file is your long term memory summary. Read it, and use `edit_memory_file` to add new important information if needed. DO NOT write too detailed to the point of being bloated. DO NOT overwrite "MEMORY.md".
 4. CONTEXT SUMMARY: After all memory read/write actions are done, output a compact context summary in the exact format below:
     [COMPACT_MEMORY_BLOCK]
     # Recent user goal(s)
@@ -71,7 +78,7 @@ You must NOT blindly write new memory files if similar topics already exist.
 Note: You can use tools multiple times. Keep going until all critical information is safely stored.
 [END CRITICAL COMMAND]"""
 
-    def __init__(self, workspace_root: str, memory_subdir: str = "memory"):
+    def __init__(self, workspace_root: str, memory_subdir: str = DAILY_MEMORY_SUBDIR_REL):
         """Initialize memory flush session manager.
         
         Args:
@@ -79,7 +86,8 @@ Note: You can use tools multiple times. Keep going until all critical informatio
             memory_subdir: Subdirectory for flushed memories (relative to workspace)
         """
         self.workspace_root = workspace_root
-        self.memory_dir = os.path.join(workspace_root, memory_subdir)
+        ensure_workspace_memory_layout(self.workspace_root)
+        self.memory_dir = os.path.normpath(os.path.join(workspace_root, memory_subdir))
         self.flush_history: list[dict] = []
         
         # Create memory directory if not exists
@@ -96,9 +104,10 @@ Note: You can use tools multiple times. Keep going until all critical informatio
         Returns:
             True if flush should trigger
         """
-        # Trigger at WARNING threshold (75%) but not yet at CRITICAL (95%)
-        # This gives us a window to flush before hard truncation
-        return context_status == "WARNING" and 0.75 <= usage_ratio < 0.95
+        # WARNING/CRITICAL boundaries are already determined by ContextManager.
+        # Trigger directly from status to avoid hardcoded threshold drift.
+        _ = usage_ratio
+        return context_status == "WARNING"
     
     def create_flush_system_prompt(self) -> str:
         """Generate the system prompt to inject for memory flushing.
@@ -151,6 +160,9 @@ Note: You can use tools multiple times. Keep going until all critical informatio
                         file_path = os.path.join(self.memory_dir, filename)
                         # Get file info
                         stat_info = os.stat(file_path)
+                        # Ignore empty placeholder files (e.g., pre-created daily file).
+                        if stat_info.st_size <= 0:
+                            continue
                         memory_files.append({
                             "name": filename,
                             "path": file_path,
@@ -178,15 +190,15 @@ Note: You can use tools multiple times. Keep going until all critical informatio
             Notification message for user
         """
         if not saved_files:
-            notification = f"""鉁?**[System] Auto Memory Flush Completed**
-馃搵 Session ID: {flush_session_id}
-鈿狅笍 No files were saved during this flush.
-馃攧 Context will now be compressed to make room for new conversations.
+            notification = f"""**[System] Auto Memory Flush Completed**
+ Session ID: {flush_session_id}
+ No files were saved during this flush.
+ Context will now be compressed to make room for new conversations.
 """
         else:
-            notification = f"""鉁?**[System] Auto Memory Flush Completed**
-馃搵 Session ID: {flush_session_id}
-馃搧 Saved {len(saved_files)} memory file(s):
+            notification = f"""**[System] Auto Memory Flush Completed**
+ Session ID: {flush_session_id}
+ Saved {len(saved_files)} memory file(s):
 """
             
             for i, file_info in enumerate(saved_files[:3]):  # Show first 3
@@ -209,12 +221,12 @@ Note: You can use tools multiple times. Keep going until all critical informatio
             if len(saved_files) > 3:
                 notification += f"\n   ... and {len(saved_files) - 3} more files"
             
-            notification += f"\n\n馃敆 View all: `ls memory/` or check workspace memory directory\n"
-            notification += f"馃棏锔?To remove: Delete files from workspace/memory/ directory\n"
+            notification += f"\n\n View all: `ls \"CloseClaw Memory/memory\"`\n"
+            notification += f"To remove: Delete files from workspace/CloseClaw Memory/memory/ directory\n"
         
         notification += f"""
-馃攧 **Action**: Context is now being compressed. New conversation window is ready.
-鈴憋笍 Timestamp: {datetime.now().isoformat()}"""
+ **Action**: Context is now being compressed. New conversation window is ready.
+ Timestamp: {datetime.now().isoformat()}"""
         
         return notification
     

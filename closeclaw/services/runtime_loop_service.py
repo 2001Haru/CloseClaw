@@ -50,16 +50,41 @@ class RuntimeLoopService:
     async def emit_task_completed(
         self,
         message_output_fn: Callable[[dict[str, Any]], Awaitable[None]],
-        task_result: dict[str, Any],
+        task_result: Any,
     ) -> None:
-        await message_output_fn(
-            {
+        if isinstance(task_result, dict):
+            task_payload = task_result.get("result")
+            origin_chat_id = None
+            origin_channel = None
+            session_key = None
+            if isinstance(task_payload, dict):
+                origin_chat_id = task_payload.get("origin_chat_id")
+                origin_channel = task_payload.get("origin_channel")
+                session_key = task_payload.get("session_key")
+
+            payload = {
                 "type": "task_completed",
                 "task_id": task_result.get("task_id"),
                 "status": task_result.get("status"),
                 "result": task_result.get("result"),
                 "error": task_result.get("error"),
+                "origin_channel": origin_channel,
+                "session_key": session_key,
             }
+            if origin_chat_id not in {None, "", "direct"}:
+                payload["_chat_id"] = origin_chat_id
+        else:
+            # Defensive fallback: preserve signal without crashing the runtime loop.
+            payload = {
+                "type": "task_completed",
+                "task_id": str(task_result),
+                "status": "unknown",
+                "result": None,
+                "error": "Unexpected task result payload type",
+            }
+
+        await message_output_fn(
+            payload
         )
 
     async def emit_assistant_message(
@@ -79,6 +104,27 @@ class RuntimeLoopService:
             }
         )
 
+    async def emit_tool_progress(
+        self,
+        message_output_fn: Callable[[dict[str, Any]], Awaitable[None]],
+        *,
+        step_id: int,
+        tool_name: str,
+        status: str,
+        target_file: str | None = None,
+    ) -> None:
+        """Emit minimal channel-visible tool progress event (not conversation history)."""
+        payload: dict[str, Any] = {
+            "type": "tool_progress",
+            "step_id": step_id,
+            "tool_name": tool_name,
+            "status": status,
+        }
+        if target_file:
+            payload["target_file"] = target_file
+
+        await message_output_fn(payload)
+
     async def emit_auth_request(
         self,
         message_output_fn: Callable[[dict[str, Any]], Awaitable[None]],
@@ -87,6 +133,8 @@ class RuntimeLoopService:
         tool_name: str | None,
         description: str | None,
         diff_preview: str | None,
+        reason: str | None = None,
+        auth_mode: str | None = None,
     ) -> None:
         await message_output_fn(
             {
@@ -95,6 +143,8 @@ class RuntimeLoopService:
                 "tool_name": tool_name,
                 "description": description,
                 "diff_preview": diff_preview,
+                "reason": reason,
+                "auth_mode": auth_mode,
                 "requires_approval": True,
             }
         )
@@ -170,6 +220,8 @@ class RuntimeLoopService:
                 tool_name=follow_auth.get("tool_name"),
                 description=follow_auth.get("description"),
                 diff_preview=follow_auth.get("diff_preview"),
+                reason=follow_auth.get("reason"),
+                auth_mode=follow_auth.get("auth_mode"),
             )
 
     async def emit_auth_approved_resolution(

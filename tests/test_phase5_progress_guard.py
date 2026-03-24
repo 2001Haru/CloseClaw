@@ -31,7 +31,7 @@ async def test_agent_stops_on_no_progress_limit(temp_workspace):
             )
 
     config = AgentConfig(model="openai/gpt-4", temperature=0.0)
-    config.metadata["phase5"] = {
+    config.metadata["orchestrator"] = {
         "max_steps": 6,
         "no_progress_limit": 2,
     }

@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 from fastembed import TextEmbedding
 
+from .workspace_layout import memory_root_dir, ensure_workspace_memory_layout
+
 logger = logging.getLogger(__name__)
 
 class MemoryChunk:
@@ -65,9 +67,9 @@ class MemoryManager:
             use_gpu: Whether to use GPU for embedding generation (if available)
         """
         self.workspace_root = os.path.abspath(workspace_root)
-        # Persist memory database under workspace_root/memory to avoid polluting
-        # project root when cwd-based execution paths are used.
-        self.memory_dir = os.path.join(self.workspace_root, "memory")
+        # Phase4 patch: persist all memory/state assets under a unified workspace folder.
+        ensure_workspace_memory_layout(self.workspace_root)
+        self.memory_dir = memory_root_dir(self.workspace_root)
         self.db_path = os.path.join(self.memory_dir, db_name)
         self.embedding_model_name = embedding_model_name
         
@@ -218,9 +220,15 @@ class MemoryManager:
         Returns:
             ID of the inserted memory chunk
         """
-        if not content.strip():
+        content = self._normalize_memory_content(content)
+        if not content:
             logger.warning("Attempted to add empty memory content")
             return -1
+
+        dedup_id = self._find_duplicate_memory_id(content, source, session_id)
+        if dedup_id is not None:
+            logger.info("Skipped duplicate memory content for session=%s source=%s", session_id, source)
+            return dedup_id
 
         embedding = self.get_embedding(content)
         metadata_json = json.dumps(metadata or {})
@@ -241,6 +249,41 @@ class MemoryManager:
             conn.commit()
             logger.info(f"Added memory chunk {memory_id} from {source}")
             return memory_id
+        finally:
+            conn.close()
+
+    def _normalize_memory_content(self, content: str) -> str:
+        """Apply lightweight cleanup before storing memory text."""
+        lines = [line.rstrip() for line in content.replace("\r\n", "\n").split("\n")]
+        compact: list[str] = []
+        blank_streak = 0
+        for line in lines:
+            if line.strip() == "":
+                blank_streak += 1
+                if blank_streak > 1:
+                    continue
+                compact.append("")
+                continue
+            blank_streak = 0
+            compact.append(line.strip())
+        return "\n".join(compact).strip()
+
+    def _find_duplicate_memory_id(self, content: str, source: str, session_id: str) -> Optional[int]:
+        """Find an existing identical memory row to prevent duplicate writes."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id FROM memory_chunks
+                WHERE session_id = ? AND source = ? AND content = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (session_id, source, content),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else None
         finally:
             conn.close()
 

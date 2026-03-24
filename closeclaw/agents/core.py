@@ -3,8 +3,15 @@
 import logging
 import os
 import json
-from typing import Any, Optional, Protocol
-from datetime import datetime, timezone
+import re
+from typing import Any, Awaitable, Callable, Optional, Protocol
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover
+    ZoneInfo = None
 
 from ..types import (
     Agent, AgentConfig, Session, Tool, Message,
@@ -15,6 +22,13 @@ from ..tools.adaptation import ToolAdaptationLayer
 from ..safety import AuditLogger
 from ..context import ContextManager, MessageCompactor
 from ..memory import MemoryFlushCoordinator, MemoryFlushSession, MemoryManager
+from ..memory.workspace_layout import (
+    PROJECT_CONTEXT_FILES,
+    DEFAULT_AUDIT_LOG_REL,
+    memory_root_dir,
+    ensure_workspace_memory_layout,
+    migrate_legacy_memory_artifacts,
+)
 from ..orchestrator import (
     Action,
     AfterObserveHook,
@@ -31,7 +45,7 @@ from ..orchestrator import (
     RunState,
     TodoStore,
 )
-from ..services import AuthService, ContextService, PlanningService, RuntimeLoopService, StateService, ToolExecutionService, ToolSchemaService
+from ..services import AuthService, ContextService, PlanningService, RuntimeLoopService, SkillsLoader, StateService, ToolExecutionService, ToolSchemaService
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +100,13 @@ class AgentCore:
         self.agent_id = agent_id
         self.llm_provider = llm_provider
         self.config = config
-        self.workspace_root = workspace_root
+        self.workspace_root = os.path.abspath(workspace_root)
+        self.repo_root = str(Path(__file__).resolve().parents[2])
         self.admin_user_id = admin_user_id
         self.state_file = state_file
+
+        ensure_workspace_memory_layout(self.workspace_root)
+        migrate_legacy_memory_artifacts(self.workspace_root)
         
         self.state = AgentState.IDLE
         self.current_session: Optional[Session] = None
@@ -102,7 +120,13 @@ class AgentCore:
         self.tool_adaptation_layer = ToolAdaptationLayer()  # Phase 2: Tool routing
         
         # Phase 3.5: Transcript Repair firewall - audit logger init
-        audit_log_path = os.path.join(workspace_root, "audit.log")
+        configured_audit_path = getattr(getattr(config, "safety", None), "audit_log_path", DEFAULT_AUDIT_LOG_REL)
+        if configured_audit_path in {"", "audit.log"}:
+            configured_audit_path = DEFAULT_AUDIT_LOG_REL
+        if os.path.isabs(configured_audit_path):
+            audit_log_path = configured_audit_path
+        else:
+            audit_log_path = os.path.join(self.workspace_root, configured_audit_path)
         self.audit_logger = AuditLogger(log_file=audit_log_path)
         
         # Phase 4: Context Management - Token counting and message compaction
@@ -142,17 +166,17 @@ class AgentCore:
         )
 
         # Phase 4 Step 2: Memory flush manager (WARNING threshold trigger)
-        self.memory_flush_session = MemoryFlushSession(workspace_root=workspace_root)
+        self.memory_flush_session = MemoryFlushSession(workspace_root=self.workspace_root)
         self.memory_flush_coordinator = MemoryFlushCoordinator(self.memory_flush_session)
         
         # Phase 4 Step 3: Memory Manager - SQLite + Vector Search
-        self.memory_manager = MemoryManager(workspace_root=workspace_root)
+        self.memory_manager = MemoryManager(workspace_root=self.workspace_root)
 
         # Phase 5: Single-loop orchestrator (MVP)
         self.orchestrator_engine = OrchestratorEngine()
         self.plan_policy = PlanPolicy()
-        phase5_cfg = self.config.metadata.get("phase5", {})
-        self.progress_policy = ProgressPolicy(no_progress_limit=int(phase5_cfg.get("no_progress_limit", 2)))
+        orchestrator_cfg = self.config.metadata.get("orchestrator", self.config.metadata.get("phase5", {}))
+        self.progress_policy = ProgressPolicy(no_progress_limit=int(orchestrator_cfg.get("no_progress_limit", 2)))
         self.orchestrator_guards = [
             PreActBudgetGuard(),
             PreActContextGuard(pre_act_callback=self._phase5_pre_act_context_guard),
@@ -192,6 +216,11 @@ class AgentCore:
             audit_logger=self.audit_logger,
             compact_memory_max_chars=self.COMPACT_MEMORY_MAX_CHARS,
         )
+        self._runtime_message_output_fn: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None
+        self.skills_loader = SkillsLoader(
+            workspace=Path(self.workspace_root),
+            builtin_skills_dir=Path(self.repo_root) / "closeclaw" / "skills",
+        )
         
         # Register retrieve_memory tool
         self.register_tool(Tool(
@@ -215,6 +244,10 @@ class AgentCore:
     def register_tool(self, tool: Tool) -> None:
         """Register a tool with the agent."""
         self.tools[tool.name] = tool
+
+        # Keep TaskManager handlers in sync for tools that may be routed to background.
+        if hasattr(self, "task_manager") and self.task_manager and getattr(tool, "handler", None):
+            self.task_manager.register_tool_handler(tool.name, tool.handler)
         
         # Also register with tool adaptation layer (Phase 2)
         # Default: auto-detect based on tool type
@@ -267,12 +300,45 @@ class AgentCore:
 
     def _phase5_max_steps(self) -> int:
         """Resolve max orchestrator steps from config metadata."""
-        phase5 = self.config.metadata.get("phase5", {})
-        max_steps = phase5.get("max_steps", 6)
+        orchestrator = self.config.metadata.get("orchestrator", self.config.metadata.get("phase5", {}))
+        max_steps = orchestrator.get("max_steps", 6)
         try:
             return max(1, int(max_steps))
         except (TypeError, ValueError):
             return 6
+
+    def _resolve_work_timezone(self) -> tuple[Any, str]:
+        """Resolve configured work timezone from metadata.
+
+        Supports: IANA names (e.g. Asia/Shanghai), UTC, UTC+08:00, UTC-5.
+        """
+        configured = str(
+            getattr(self.config, "work_time_timezone", None)
+            or self.config.metadata.get("work_time_timezone", "UTC")
+            or "UTC"
+        ).strip()
+        if not configured:
+            return timezone.utc, "UTC"
+
+        if configured.upper() == "UTC":
+            return timezone.utc, "UTC"
+
+        m = re.fullmatch(r"UTC([+-])(\d{1,2})(?::?(\d{2}))?", configured, flags=re.IGNORECASE)
+        if m:
+            sign = 1 if m.group(1) == "+" else -1
+            hours = int(m.group(2))
+            minutes = int(m.group(3) or "0")
+            if hours <= 23 and minutes <= 59:
+                offset = timedelta(hours=hours, minutes=minutes) * sign
+                return timezone(offset), configured.upper()
+
+        if ZoneInfo is not None:
+            try:
+                return ZoneInfo(configured), configured
+            except Exception:
+                logger.warning("Invalid work_time_timezone '%s', fallback to UTC", configured)
+
+        return timezone.utc, "UTC"
 
     async def _process_message_v2_orchestrated(self, message: Message) -> dict[str, Any]:
         """Phase 5 P1 orchestrator flow (PLAN -> ACT -> OBSERVE -> DECIDE).
@@ -398,6 +464,11 @@ class AgentCore:
             if action.type == "tool_call":
                 tool_call: ToolCall = action.payload["tool_call"]
                 tool_result = await self._process_tool_call(tool_call)
+                await self._emit_tool_progress_event(
+                    step_id=state.step_id,
+                    tool_call=tool_call,
+                    tool_result=tool_result,
+                )
                 return Observation(
                     kind="tool_result",
                     status=tool_result.status,
@@ -539,6 +610,54 @@ class AgentCore:
         ))
 
         return output
+
+    async def _emit_tool_progress_event(
+        self,
+        *,
+        step_id: int,
+        tool_call: ToolCall,
+        tool_result: ToolResult,
+    ) -> None:
+        """Emit per-tool progress to active channel without writing to conversation history."""
+        if not self._runtime_message_output_fn:
+            return
+
+        target_file = self._extract_progress_target_file(tool_call, tool_result)
+        status = "success" if tool_result.status in {"success", "task_created"} else "fail"
+
+        try:
+            await self.runtime_loop_service.emit_tool_progress(
+                self._runtime_message_output_fn,
+                step_id=step_id,
+                tool_name=tool_call.name,
+                status=status,
+                target_file=target_file,
+            )
+        except Exception as exc:
+            logger.exception("Failed to emit tool progress event: %s", exc)
+
+    def _extract_progress_target_file(self, tool_call: ToolCall, tool_result: ToolResult) -> str | None:
+        """Best-effort extraction of a file path target for progress visibility."""
+        path_keys = ("filePath", "path", "file", "filename", "target", "uri")
+
+        def _pick_path(value: Any) -> str | None:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            return None
+
+        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+        for key in path_keys:
+            candidate = _pick_path(args.get(key))
+            if candidate:
+                return candidate
+
+        result = tool_result.result if isinstance(tool_result.result, dict) else {}
+        for key in path_keys:
+            candidate = _pick_path(result.get(key))
+            if candidate:
+                return candidate
+
+        return None
 
     async def _phase5_pre_act_context_guard(self, state: RunState, action: Action) -> Optional[Any]:
         """P2-B: run-scoped context pressure hook invoked by PreActContextGuard."""
@@ -905,12 +1024,97 @@ class AgentCore:
         return self.context_service.build_compact_memory_pair(self.compact_memory_snapshot)
 
     def _build_system_prompt(self, suffix: str = "") -> str:
-        """Build system prompt with baseline behavior and optional recall guidance."""
+        """Build multi-layer system prompt with project context and work information."""
+        context_block = self._build_project_context_block()
+        work_info_block = self._build_work_information_block()
+        native_tools_block = self._build_native_tools_block()
+        always_skills_block = self._build_always_skills_block()
+        skills_summary_block = self._build_skills_summary_block()
+
+        base_prompt = self.config.system_prompt or ""
+        extras: list[str] = [
+            native_tools_block,
+            context_block,
+            work_info_block,
+            always_skills_block,
+            skills_summary_block,
+        ]
+        combined_base_prompt = "\n\n".join([p for p in [base_prompt, *extras] if p])
+
         return self.context_service.build_system_prompt(
-            base_prompt=self.config.system_prompt or "",
+            base_prompt=combined_base_prompt,
             has_retrieve_memory_tool="retrieve_memory" in self.tools,
             suffix=suffix,
         )
+
+    def _build_always_skills_block(self) -> str:
+        always_skills = self.skills_loader.get_always_skills()
+        if not always_skills:
+            return ""
+
+        content = self.skills_loader.load_skills_for_context(always_skills)
+        if not content:
+            return ""
+
+        return "[ALWAYS SKILLS]\n" + content
+
+    def _build_skills_summary_block(self) -> str:
+        summary = self.skills_loader.build_skills_summary().strip()
+        if not summary:
+            return ""
+
+        return (
+            "[SKILLS INDEX]\n"
+            "Use read_file to load a full SKILL.md when the task requires specialized workflow.\n"
+            f"{summary}"
+        )
+
+    def _build_project_context_block(self) -> str:
+        root = memory_root_dir(self.workspace_root)
+        sections: list[str] = []
+        for name in PROJECT_CONTEXT_FILES:
+            path = os.path.join(root, name)
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+            except Exception:
+                continue
+            if not content:
+                continue
+            sections.append(f"[{name}]\n{content}")
+
+        if not sections:
+            return ""
+        return "[PROJECT CONTEXT]\n" + "\n\n".join(sections)
+
+    def _build_work_information_block(self) -> str:
+        now_utc = datetime.now(timezone.utc)
+        work_tz, tz_label = self._resolve_work_timezone()
+        now_local = now_utc.astimezone(work_tz)
+        return (
+            "[WORK INFORMATION]\n"
+            f"current_time_utc: {now_utc.isoformat()}\n"
+            f"configured_utc_timezone: {tz_label}\n"
+            f"current_time_configured: {now_local.isoformat()}\n"
+            f"workspace_root: {self.workspace_root}\n"
+            f"closeclaw_repository_root: {self.repo_root}"
+        )
+
+    def _build_native_tools_block(self) -> str:
+        if not self.tools:
+            return ""
+
+        rows: list[str] = []
+        for name in sorted(self.tools.keys()):
+            tool = self.tools[name]
+            desc = (tool.description or "").strip().replace("\n", " ")
+            if len(desc) > 120:
+                desc = desc[:120] + "..."
+            rows.append(f"- {name}: {desc}")
+
+        return "[NATIVE TOOLS]\nBuilt-in tools injected by system prompt:\n" + "\n".join(rows)
 
     def _build_memory_recall_block(self) -> str:
         """Return recall policy guidance if memory retrieval is available."""
@@ -925,7 +1129,8 @@ class AgentCore:
 
     def _format_tools_for_llm(self) -> list[dict[str, Any]]:
         """Format registered tools for LLM function calling."""
-        return self.tool_schema_service.format_tools_for_llm(self.tools.values())
+        external_specs = self.tool_execution_service.list_external_specs()
+        return self.tool_schema_service.format_tools_for_llm([*self.tools.values(), *external_specs])
 
     async def _handle_retrieve_memory(self, query: str) -> str:
         """Handle retrieve_memory tool call."""
@@ -964,6 +1169,12 @@ class AgentCore:
             agent.set_task_manager(task_manager)
         """
         self.task_manager = task_manager
+
+        # Register all current tool handlers so background routing can execute them.
+        for tool in self.tools.values():
+            if getattr(tool, "handler", None):
+                self.task_manager.register_tool_handler(tool.name, tool.handler)
+
         logger.info("TaskManager integrated with AgentCore")
     
     async def poll_background_tasks(self) -> list[dict[str, Any]]:
@@ -990,7 +1201,42 @@ class AgentCore:
         
         # Delegate to TaskManager (to be implemented in Phase 2)
         completed_tasks = await self.task_manager.poll_results()
-        return completed_tasks
+
+        # Normalize TaskManager outputs to list[dict] for stable runtime loop handling.
+        normalized: list[dict[str, Any]] = []
+
+        if isinstance(completed_tasks, dict):
+            for task_id, task in completed_tasks.items():
+                if isinstance(task, dict):
+                    normalized.append({
+                        "task_id": task.get("task_id", task_id),
+                        "status": task.get("status"),
+                        "result": task.get("result"),
+                        "error": task.get("error"),
+                    })
+                else:
+                    normalized.append({
+                        "task_id": getattr(task, "task_id", task_id),
+                        "status": getattr(getattr(task, "status", None), "value", getattr(task, "status", "unknown")),
+                        "result": getattr(task, "result", None),
+                        "error": getattr(task, "error", None),
+                    })
+            return normalized
+
+        if isinstance(completed_tasks, list):
+            for task in completed_tasks:
+                if isinstance(task, dict):
+                    normalized.append(task)
+                else:
+                    normalized.append({
+                        "task_id": str(task),
+                        "status": "unknown",
+                        "result": None,
+                        "error": "Unexpected task result payload type",
+                    })
+            return normalized
+
+        return normalized
     
     async def create_background_task(self, 
                                     tool_name: str, 
@@ -1061,6 +1307,7 @@ class AgentCore:
             - Task resume on agent restart (load_from_state)
         """
         logger.info(f"Agent.run() starting: session={session_id}, user={user_id}, channel={channel_type}")
+        self._runtime_message_output_fn = message_output_fn
         
         # Restore state if provided (agent restart scenario)
         if state:
@@ -1120,6 +1367,8 @@ class AgentCore:
                             tool_name=pending_auth.get("tool_name"),
                             description=pending_auth.get("description"),
                             diff_preview=pending_auth.get("diff_preview"),
+                            reason=pending_auth.get("reason"),
+                            auth_mode=pending_auth.get("auth_mode"),
                         )
                         logger.info(f"Auth request sent to user: {auth_request_id}")
                         
@@ -1223,6 +1472,7 @@ class AgentCore:
         
         finally:
             # Cleanup
+            self._runtime_message_output_fn = None
             await self.end_session()
             logger.info(f"Agent.run() ended for session={session_id}")
     

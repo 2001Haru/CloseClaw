@@ -243,20 +243,143 @@ llm:
             assert config_dict["llm"]["provider"] == "openai"
             assert "safety" in config_dict
 
-        def test_workspace_root_defaults_to_config_dir_when_missing(self, temp_workspace):
-                """When workspace_root is omitted, use config file directory instead of cwd."""
-                config_content = """
+    def test_heartbeat_config_defaults_and_overrides(self, temp_workspace):
+        """Heartbeat config should load with defaults and custom overrides."""
+        config_content = """
+llm:
+    provider: openai
+    model: gpt-4
+
+heartbeat:
+    enabled: true
+    interval_s: 900
+    quiet_hours:
+        enabled: true
+        timezone: Asia/Shanghai
+        ranges: ["23:00-08:00"]
+    queue_busy_guard:
+        enabled: true
+        max_queue_size: 50
+    routing:
+        target_ttl_s: 600
+        fallback_channel: cli
+        fallback_chat_id: direct
+    notify:
+        enabled: false
+"""
+        config_path = Path(temp_workspace) / "heartbeat_config.yaml"
+        config_path.write_text(config_content)
+
+        loader = ConfigLoader()
+        config = loader.load(str(config_path))
+
+        assert config.heartbeat.enabled is True
+        assert config.heartbeat.interval_s == 900
+        assert config.heartbeat.quiet_hours.enabled is True
+        assert config.heartbeat.quiet_hours.timezone == "Asia/Shanghai"
+        assert config.heartbeat.queue_busy_guard.max_queue_size == 50
+        assert config.heartbeat.routing.target_ttl_s == 600
+        assert config.heartbeat.notify.enabled is False
+
+    def test_workspace_root_defaults_to_config_dir_when_missing(self, temp_workspace):
+        """When workspace_root is omitted, use config file directory instead of cwd."""
+        config_content = """
 llm:
     provider: openai
     model: gpt-4
 """
-                config_path = Path(temp_workspace) / "minimal_config.yaml"
-                config_path.write_text(config_content)
+        config_path = Path(temp_workspace) / "minimal_config.yaml"
+        config_path.write_text(config_content)
 
-                loader = ConfigLoader()
-                config = loader.load(str(config_path))
+        loader = ConfigLoader()
+        config = loader.load(str(config_path))
 
-                assert config.workspace_root == str(Path(temp_workspace).resolve())
+        assert config.workspace_root == str(Path(temp_workspace).resolve())
+
+    def test_legacy_state_file_is_upgraded_to_memory_path(self, temp_workspace):
+        """Legacy state_file=state.json should be auto-upgraded to CloseClaw Memory path."""
+        config_content = """
+llm:
+  provider: openai
+  model: gpt-4
+
+state_file: state.json
+"""
+        config_path = Path(temp_workspace) / "state_upgrade_config.yaml"
+        config_path.write_text(config_content)
+
+        loader = ConfigLoader()
+        config = loader.load(str(config_path))
+
+        assert config.state_file == "CloseClaw Memory/state.json"
+
+    def test_web_search_brave_config_parses(self, temp_workspace):
+        """web_search block should parse Brave API configuration."""
+        config_content = """
+llm:
+    provider: openai
+    model: gpt-4
+
+web_search:
+    enabled: true
+    provider: brave
+    brave_api_key: BSA-test-key
+    timeout_seconds: 15
+"""
+        config_path = Path(temp_workspace) / "web_search_config.yaml"
+        config_path.write_text(config_content)
+
+        loader = ConfigLoader()
+        config = loader.load(str(config_path))
+
+        assert config.web_search.enabled is True
+        assert config.web_search.provider == "brave"
+        assert config.web_search.brave_api_key == "BSA-test-key"
+        assert config.web_search.timeout_seconds == 15
+
+    def test_safety_mode_and_guardian_config_parses(self, temp_workspace):
+        """safety block should parse security_mode and consensus guardian settings."""
+        config_content = """
+llm:
+    provider: openai
+    model: gpt-4
+
+safety:
+    security_mode: consensus
+    consensus_guardian_timeout_seconds: 42.5
+    consensus_guardian_prompt: "You are custom sentinel"
+    default_need_auth: true
+"""
+        config_path = Path(temp_workspace) / "safety_mode_config.yaml"
+        config_path.write_text(config_content)
+
+        loader = ConfigLoader()
+        config = loader.load(str(config_path))
+
+        assert config.safety.security_mode == "consensus"
+        assert config.safety.consensus_guardian_timeout_seconds == 42.5
+        assert config.safety.consensus_guardian_prompt == "You are custom sentinel"
+        assert config.safety.default_need_auth is True
+
+    def test_safety_mode_defaults_to_supervised(self, temp_workspace):
+        """When safety mode is omitted, default should remain supervised."""
+        config_content = """
+llm:
+    provider: openai
+    model: gpt-4
+
+safety:
+    default_need_auth: false
+"""
+        config_path = Path(temp_workspace) / "safety_mode_default_config.yaml"
+        config_path.write_text(config_content)
+
+        loader = ConfigLoader()
+        config = loader.load(str(config_path))
+
+        assert config.safety.security_mode == "supervised"
+        assert config.safety.consensus_guardian_timeout_seconds == 20.0
+        assert config.safety.consensus_guardian_prompt is None
 
 
 class TestConfigEdgeCases:

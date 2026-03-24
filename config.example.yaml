@@ -1,112 +1,172 @@
-# CloseClaw Configuration Template
-# Copy this file to config.yaml and fill in your settings
+# CloseClaw Configuration Template  # Copy to config.yaml and replace all example values.
 
-# Agent identifier (unique name for this agent instance)
-agent_id: "closeclaw-main"
+agent_id: "closeclaw-main"  # Unique identifier for this running agent instance.
+workspace_root: "/home/user/my_workspace"  # Absolute workspace root. If omitted, loader falls back to config file directory (often repository path).
 
-# Workspace root directory (ALL file operations restricted to this directory)
-# Use absolute paths for safety
-workspace_root: "/home/user/my_workspace"  # Change this to your workspace
+llm:  # LLM provider settings.
+  provider: "openai"  # Provider id: openai, openai-compatible, gemini, anthropic, deepseek, ollama, etc.
+  model: "gpt-4"  # Model name exposed by provider.
+  api_key: "sk-XXXXXXXXXXXXXXXX"  # API key used for model requests.
+  base_url: "https://api.openai.com/v1"  # API endpoint base URL.
+  # For gemini/anthropic provider ids, install optional deps first: pip install -e ".[providers]"
 
-# LLM Configuration
-llm:
-  # Provider: openai, ohmygpt, deepseek, ollama, openai-compatible
-  # All providers use OpenAI-compatible API format
-  provider: "openai"
-  
-  # Model name/identifier
-  model: "gpt-4"
-  
-  # API key — direct string or environment variable ${OPENAI_API_KEY}
-  api_key: ${OPENAI_API_KEY}
-  
-  # Base URL for API endpoint
-  # - OpenAI default: https://api.openai.com/v1
-  # - OhMyGPT: https://api.ohmygpt.com/v1
-  # - DeepSeek: https://api.deepseek.com/v1
-  # - Ollama: http://localhost:11434/v1
-  # - Custom: any OpenAI-compatible endpoint
-  # If omitted, auto-detected from provider name
-  base_url: "https://api.ohmygpt.com/v1"
-  
-  # Temperature (0.0 = deterministic, 1.0 = creative)
-  temperature: 0.0
-  
-  # Max tokens per response
-  max_tokens: 2000
-  
-  # Timeout in seconds
-  timeout_seconds: 60
+  temperature: 0.0  # Sampling temperature; 0 is deterministic.
+  max_tokens: 5000  # Max output tokens per LLM response.
+  timeout_seconds: 60  # Network timeout for one model call.
 
-# Communication channels (at least one must be enabled)
-channels:
-  # Telegram channel (optional)
-  - type: "telegram"
-    enabled: true
-    # Bot token from @BotFather
-    token: ${TELEGRAM_BOT_TOKEN}
-  
-  # Feishu (Lark) channel (optional)
-  - type: "feishu"
+
+web_search:  # Optional agent web search provider settings.
+  enabled: false  # Set true to allow agent web search calls.
+  provider: "brave"  # Currently supported provider: brave.
+  brave_api_key: "BSA-XXXXXXXXXXXXXXXX"  # Brave Search API key.
+  timeout_seconds: 30  # HTTP timeout for search requests.
+
+
+mcp:  # Optional MCP server definitions used by mcp-health diagnostics.
+  servers:
+    - id: "local-stdio"  # Unique server id.
+      transport: "stdio"  # Local process transport.
+      command: "python"  # Executable command.
+      args: ["-m", "your_mcp_server"]  # Command arguments.
+      timeout_seconds: 30  # Request timeout in seconds.
+
+    - id: "remote-http"  # Unique server id.
+      transport: "http"  # HTTP transport.
+      base_url: "https://example.com"  # MCP service base url.
+      endpoint: "/mcp"  # MCP endpoint path.
+      timeout_seconds: 15  # Request timeout in seconds.
+      max_retries: 2  # Retry attempts on transient failures.
+      retry_backoff_seconds: 0.2  # Backoff interval between retries.
+
+
+channels:  # Message channels; at least one channel should be enabled.
+  - type: "telegram"  # Telegram bot channel.
+    enabled: false  # Enable Telegram polling/webhook channel.
+    token: "TELEGRAM_BOT_TOKEN"  # Bot token from @BotFather.
+
+  - type: "feishu"  # Feishu/Lark channel.
+    enabled: false  # Enable Feishu channel.
+    token: "FEISHU_TOKEN"  # Feishu app token/app id.
+    webhook_url: "FEISHU_WEBHOOK"  # Feishu webhook or secret endpoint config.
+
+  - type: "discord"  # Discord bot channel.
     enabled: false
-    # App ID and secret from Feishu console
-    token: ${FEISHU_TOKEN}
-    webhook_url: ${FEISHU_WEBHOOK}
+    token: "DISCORD_BOT_TOKEN"  # Bot token from Discord Developer Portal.
+
+  - type: "whatsapp"  # WhatsApp bridge channel (websocket bridge required).
+    enabled: false
+    # token is optional for this channel and can be left empty.
+    token: ""
+    # webhook_url can also be used as bridge url fallback.
+    webhook_url: "ws://127.0.0.1:8765"
+    metadata:
+      bridge_url: "ws://127.0.0.1:8765"  # Preferred bridge URL.
+      bridge_token: ""  # Optional auth token for bridge.
+
+  - type: "qq"  # QQ bot channel (qq-botpy).
+    enabled: false
+    token: "QQ_APP_ID"  # QQ app id.
+    webhook_url: "QQ_APP_SECRET"  # QQ app secret.
+
+  - type: "cli"  # Local terminal channel.
+    enabled: true  # Keep true for local development/testing.
+
+# Health checks (recommended before production start):
+#   closeclaw channel-health --config config.yaml
+#   closeclaw provider-health --config config.yaml
+# Optional filter:
+#   closeclaw channel-health --config config.yaml --name discord
+#   closeclaw provider-health --config config.yaml --name openai
+
+
+safety:  # Safety, auth, and audit controls.
+  admin_user_ids:  # Users allowed to approve need_auth actions.
+    - "cli_user"
+    - "YOUR_TELEGRAM_USER_ID"  # Replace with real admin user id.
+
+  # Auth mode behavior:
+  # - autonomous: no authorization need, execute directly
+  # - supervised: require human approval for need_auth tools
+  # - consensus(Recommended): sentinel agent review worker agent's actions 
+  security_mode: "consensus"
+
+  # Consensus sentinel settings (used when security_mode=consensus).
+  consensus_guardian_timeout_seconds: 20.0
+  # Optional custom guardian prompt. Leave null to use built-in strict prompt.
+  consensus_guardian_prompt: null
+
+  default_need_auth: false  # Global fallback auth policy; false means tool-level need_auth drives approvals.
+  command_blacklist_enabled: true  # Enable shell command blacklist checks.
+  custom_blacklist_rules: []  # Additional regex blacklist rules.
+
+  audit_log_enabled: true  # Enable audit log writing.
+  audit_log_path: "CloseClaw Memory/audit.log"  # Audit file path (relative to workspace_root or absolute).
+  audit_log_retention_days: 90  # Planned retention horizon for audit records.
+
+
+max_iterations: 32  # Max orchestrator iterations per user turn.
+timeout_seconds: 300  # Hard timeout (seconds) for one agent turn.
+work_time_timezone: "UTC+08:00"  # Timezone for prompt work-info display. Supports UTC / UTC+08:00 / Asia/Shanghai.
+
+
+context_management:  # Context window and compaction controls.
+  max_tokens: 128000  # Context budget for composed prompt + history.
+  warning_threshold: 0.75  # Ratio entering WARNING (can trigger memory flush).
+  critical_threshold: 0.95  # Ratio entering CRITICAL fallback trim.
+  summarize_window: 50  # Historical rounds considered for summarization.
+  active_window: 8  # Recent rounds kept with higher fidelity.
+  chunk_size: 5000  # Chunk size for summarization subcalls.
+  retention_days: 90  # Memory/archive retention hint in days.
+
+
+system_prompt: |  # Base system prompt (Default is recommended).
+  You are CloseClaw, a safe and precise AI agent, running on your user's computer.
+  Everything about you is stored in the folder "CloseClaw Memory" in your workspace. Check it if needed.
+
+
+log_level: "WARNING"  # Logging verbosity: DEBUG, INFO, WARNING, ERROR.
+state_file: "CloseClaw Memory/state.json"  # Machine-readable runtime state file.
+interaction_log_file: "CloseClaw Memory/interaction.md"  # Human-readable interaction transcript file.
+
+
+orchestrator:  # Orchestrator behavior controls.
+  max_steps: 64  # Max internal action steps per run.
+  max_tokens_per_run: 120000  # Reserved per-run token budget guard.
+  max_wall_time_seconds: 45  # Max wall time for one orchestrated run.
+  no_progress_limit: 3  # Stop after N consecutive no-progress observations.
   
-  # Local CLI (always available for development)
-  - type: "cli"
-    enabled: true
+  telemetry:  # Orchestrator telemetry controls.
+    enabled: true  # Enable telemetry output.
+    log_actions: true  # Log per-action details.
 
-# Security and permission controls
-safety:
-  # User IDs permitted to approve Zone C operations
-  # Get Telegram user ID: https://t.me/userinfobot
-  admin_user_ids:
-    - "YOUR_TELEGRAM_USER_ID"
-  
-  # Which zones require explicit authorization
-  # A = always safe, B = internal, C = dangerous
-  require_auth_for_zones:
-    - "C"
-  
-  # Enable command blacklist for shell execution
-  command_blacklist_enabled: true
-  
-  # Custom regex patterns to block (in addition to built-in list)
-  custom_blacklist_rules: []
-  
-  # Audit logging
-  audit_log_enabled: true
-  audit_log_path: "audit.log"
+  rollout:  # Rollout gate for orchestrator mode.
+    mode: "session_allowlist"  # off or session_allowlist.
+    session_allowlist: []  # Session ids allowed when mode=session_allowlist.
 
-# Agent loop configuration
-max_iterations: 10
-timeout_seconds: 300
 
-# System prompt (optional; leave blank to use default)
-system_prompt: |
-  You are CloseClaw, a safe and precise AI agent.
-  If unsure about an operation, ask for clarification.
-  Before answering questions that depend on past decisions, preferences, TODOs, or constraints,
-  use retrieve_memory first and ground your answer in retrieved results.
-  If memory is uncertain, say so clearly and ask a follow-up question.
+heartbeat:  # Periodic heartbeat worker (reads CloseClaw Memory/HEARTBEAT.md and executes decisions).
+  enabled: true  # Master switch for heartbeat loop.
+  interval_s: 1800  # Seconds between heartbeat ticks.
 
-# Logging
-log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  quiet_hours:  # Optional time-window gate.
+    enabled: false  # Skip heartbeat during quiet hours.
+    timezone: "UTC+08:00"  # Timezone used for quiet-hour range parsing.
+    ranges: []  # Quiet-hour ranges, format HH:MM-HH:MM (example: ["23:00-07:00"]).
 
-# State persistence files
-state_file: "state.json"              # Machine-readable state
-interaction_log_file: "interaction.md"  # Human-readable log
+  queue_busy_guard:  # Optional queue backpressure gate.
+    enabled: false  # Skip heartbeat when queue is busy.
+    max_queue_size: 100  # Busy threshold for queue size getter.
 
-# Phase 5 Orchestrator (P1)
-phase5:
-  max_steps: 8
-  max_tokens_per_run: 120000
-  max_wall_time_seconds: 45
-  no_progress_limit: 2
-  telemetry:
-    enabled: true
-    log_actions: true
-  rollout:
-    mode: "session_allowlist"  # off | session_allowlist
-    session_allowlist: []
+  routing:  # Target routing fallback controls.
+    target_ttl_s: 1800  # Seconds to reuse last resolved target.
+    fallback_channel: "cli"  # Fallback channel when no live target.
+    fallback_chat_id: "direct"  # Fallback chat/user id.
+
+  notify:  # Heartbeat notification output.
+    enabled: true  # Send notify callback result after heartbeat execution.
+
+
+cron:  # Cron scheduler settings for timed wake jobs.
+  enabled: true  # Master switch for cron service.
+  store_file: "CloseClaw Memory/cron_jobs.json"  # Persistent cron job store path.
+  default_timezone: "UTC+08:00"  # Default timezone for cron schedule parsing.

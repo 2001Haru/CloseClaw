@@ -40,7 +40,7 @@ def memory_manager(temp_workspace):
 def test_init_db(memory_manager):
     """Test database initialization."""
     assert os.path.exists(memory_manager.db_path)
-    assert os.path.dirname(memory_manager.db_path).endswith(os.path.join("test_workspace", "memory"))
+    assert os.path.dirname(memory_manager.db_path).endswith(os.path.join("test_workspace", "CloseClaw Memory"))
     
     import sqlite3
     conn = sqlite3.connect(memory_manager.db_path)
@@ -143,7 +143,7 @@ def test_clear_memory(memory_manager):
 
 
 def test_memory_db_path_under_workspace_memory(temp_workspace):
-    """Memory database should live under workspace_root/memory."""
+    """Memory database should live under workspace_root/CloseClaw Memory."""
     with patch("closeclaw.memory.memory_manager.TextEmbedding") as MockEmbedding:
         mock_instance = MockEmbedding.return_value
 
@@ -154,7 +154,24 @@ def test_memory_db_path_under_workspace_memory(temp_workspace):
         mock_instance.embed.side_effect = mock_embed
 
         manager = MemoryManager(workspace_root=temp_workspace)
-        assert manager.db_path == os.path.join(temp_workspace, "memory", "memory.sqlite")
+        assert manager.db_path == os.path.join(temp_workspace, "CloseClaw Memory", "memory.sqlite")
+
+
+def test_add_memory_deduplicates_cleaned_content(memory_manager):
+    """Duplicate normalized content should not create extra rows."""
+    first = memory_manager.add_memory("line1\n\n\nline2", "src", "s1")
+    second = memory_manager.add_memory(" line1 \n\nline2 ", "src", "s1")
+
+    assert first == second
+
+    import sqlite3
+    conn = sqlite3.connect(memory_manager.db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM memory_chunks")
+        assert cursor.fetchone()[0] == 1
+    finally:
+        conn.close()
 
 
 

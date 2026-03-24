@@ -43,6 +43,10 @@ class ToolExecutionService:
         self._external_specs.pop(tool_name, None)
         self._external_handlers.pop(tool_name, None)
 
+    def list_external_specs(self) -> list[ToolSpecV2]:
+        """Return all currently registered external tool specs."""
+        return list(self._external_specs.values())
+
     def update_middleware_chain(self, chain: Optional[MiddlewareChain]) -> None:
         """Update middleware chain without recreating the service."""
         self._middleware_chain = chain
@@ -58,6 +62,7 @@ class ToolExecutionService:
         tool = self._tools.get(tool_call.name)
         external_spec = self._external_specs.get(tool_call.name)
         is_external = tool is None and external_spec is not None
+        permission_context: dict[str, Any] = {}
 
         if not tool and not external_spec:
             return ToolResult(
@@ -104,6 +109,14 @@ class ToolExecutionService:
                 result.metadata = auth_result
                 return result
 
+            if auth_result.get("status") == "allow":
+                permission_context = {
+                    "auth_mode": auth_result.get("auth_mode"),
+                    "reason": auth_result.get("reason"),
+                    "reason_code": auth_result.get("reason_code"),
+                    "guardian_comment": auth_result.get("guardian_comment"),
+                }
+
         if is_external:
             return await self._execute_external_tool_call(tool_call, spec)
 
@@ -116,6 +129,7 @@ class ToolExecutionService:
 
         result.metadata = {
             **(result.metadata or {}),
+            **{k: v for k, v in permission_context.items() if v is not None},
             "source": spec.source,
             "tool_type": spec.tool_type,
             "need_auth": spec.need_auth,

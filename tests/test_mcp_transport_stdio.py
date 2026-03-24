@@ -9,7 +9,7 @@ import pytest
 from closeclaw.mcp.transport import MCPStdioClient
 
 
-MOCK_STDIO_SERVER_CODE = textwrap.dedent(r"""
+MOCK_STDIO_SERVER_CODE = textwrap.dedent("""
 import json
 import sys
 

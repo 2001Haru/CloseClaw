@@ -195,6 +195,44 @@ class TestCLIArgumentParsing:
         
         assert args.command == "tasks"
         assert args.verbose is True
+
+    def test_parser_agent_command(self):
+        """Test: Parse 'agent' command."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["agent", "--config", "config.yaml"])
+
+        assert args.command == "agent"
+        assert args.config == "config.yaml"
+
+    def test_parser_gateway_command(self):
+        """Test: Parse 'gateway' command."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["gateway", "--config", "config.yaml"])
+
+        assert args.command == "gateway"
+        assert args.config == "config.yaml"
+
+    def test_parser_list_show_stop_aliases(self):
+        """Test: Parse concise aliases list/show/stop."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+
+        args = parser.parse_args(["list", "-v"])
+        assert args.command == "list"
+        assert args.verbose is True
+
+        args = parser.parse_args(["show", "#001"])
+        assert args.command == "show"
+        assert args.task_id == "#001"
+
+        args = parser.parse_args(["stop", "#001"])
+        assert args.command == "stop"
+        assert args.task_id == "#001"
     
     def test_parser_task_command(self):
         """Test: Parse 'task' command."""
@@ -236,6 +274,127 @@ class TestCLIArgumentParsing:
         assert args.config == "config.yaml"
         assert args.json is True
 
+    def test_parser_channel_health_command(self):
+        """Test: Parse 'channel-health' command."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["channel-health", "--config", "config.yaml", "--name", "discord", "--json"])
+
+        assert args.command == "channel-health"
+        assert args.config == "config.yaml"
+        assert args.name == "discord"
+        assert args.json is True
+
+    def test_parser_provider_health_command(self):
+        """Test: Parse 'provider-health' command."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["provider-health", "--config", "config.yaml", "--name", "openai"])
+
+        assert args.command == "provider-health"
+        assert args.config == "config.yaml"
+        assert args.name == "openai"
+
+    def test_parser_mcp_channel_provider_alias_commands(self):
+        """Test: Parse concise aliases mcp/channel/provider."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+
+        args = parser.parse_args(["mcp", "--json"])
+        assert args.command == "mcp"
+        assert args.json is True
+
+        args = parser.parse_args(["channel", "--name", "discord"])
+        assert args.command == "channel"
+        assert args.name == "discord"
+
+        args = parser.parse_args(["provider", "--name", "openai"])
+        assert args.command == "provider"
+        assert args.name == "openai"
+
+    def test_parser_heartbeat_trigger_command(self):
+        """Test: Parse 'heartbeat-trigger' command."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["heartbeat-trigger", "--config", "config.yaml", "--json"])
+
+        assert args.command == "heartbeat-trigger"
+        assert args.config == "config.yaml"
+        assert args.json is True
+
+    def test_parser_heartbeat_status_command(self):
+        """Test: Parse 'heartbeat-status' command."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["heartbeat-status", "--config", "config.yaml"])
+
+        assert args.command == "heartbeat-status"
+        assert args.config == "config.yaml"
+
+    def test_parser_cron_add_command(self):
+        """Test: Parse 'cron-add' command."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "cron-add",
+            "--id", "job1",
+            "--kind", "every",
+            "--message", "hello",
+            "--every-ms", "1000",
+            "--config", "config.yaml",
+        ])
+
+        assert args.command == "cron-add"
+        assert args.id == "job1"
+        assert args.kind == "every"
+        assert args.every_ms == 1000
+
+    def test_parser_cron_list_command(self):
+        """Test: Parse 'cron-list' command."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["cron-list", "--config", "config.yaml", "--json"])
+
+        assert args.command == "cron-list"
+        assert args.config == "config.yaml"
+        assert args.json is True
+
+    def test_parser_cron_remove_command(self):
+        """Test: Parse 'cron-remove' command."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args(["cron-remove", "job1", "--config", "config.yaml"])
+
+        assert args.command == "cron-remove"
+        assert args.id == "job1"
+
+    def test_parser_cron_enable_disable_and_run_now_commands(self):
+        """Test: Parse cron enable/disable/run-now commands."""
+        from closeclaw.cli import create_parser
+
+        parser = create_parser()
+
+        args = parser.parse_args(["cron-enable", "job1"])
+        assert args.command == "cron-enable"
+        assert args.id == "job1"
+
+        args = parser.parse_args(["cron-disable", "job1"])
+        assert args.command == "cron-disable"
+        assert args.id == "job1"
+
+        args = parser.parse_args(["cron-run-now", "job1", "--json"])
+        assert args.command == "cron-run-now"
+        assert args.id == "job1"
+        assert args.json is True
+
 
 class TestCLIIntegration:
     """Integration tests with real TaskManager."""
@@ -270,6 +429,55 @@ class TestCLIIntegration:
         finally:
             if temp_path.exists():
                 temp_path.unlink()
+
+
+class TestCLIHealthManagers:
+    """Tests for channel/provider health CLI managers."""
+
+    @pytest.fixture
+    def temp_config_file(self):
+        content = """
+agent_id: "test-agent"
+workspace_root: "."
+llm:
+  provider: "openai"
+  model: "gpt-4"
+  api_key: "test-key"
+channels:
+  - type: "cli"
+    enabled: true
+  - type: "discord"
+    enabled: false
+    token: ""
+safety:
+  admin_user_ids: ["cli_user"]
+"""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(content)
+            p = Path(f.name)
+        yield p
+        if p.exists():
+            p.unlink()
+
+    def test_channel_health_manager_snapshot(self, temp_config_file):
+        from closeclaw.cli.commands import CLIChannelHealthManager
+
+        manager = CLIChannelHealthManager(config_file=temp_config_file)
+        snapshot = manager.get_health()
+
+        assert "summary" in snapshot
+        assert "channels" in snapshot
+        assert any(item["channel"] == "cli" for item in snapshot["channels"])
+
+    def test_provider_health_manager_snapshot(self, temp_config_file):
+        from closeclaw.cli.commands import CLIProviderHealthManager
+
+        manager = CLIProviderHealthManager(config_file=temp_config_file)
+        snapshot = manager.get_health()
+
+        assert "summary" in snapshot
+        assert "providers" in snapshot
+        assert snapshot["summary"]["active_provider"] in {"openai", "openai-compatible"}
 
 
 if __name__ == "__main__":

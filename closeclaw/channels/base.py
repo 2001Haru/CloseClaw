@@ -106,7 +106,9 @@ class BaseChannel(ABC):
                                 auth_request_id: str,
                                 tool_name: str,
                                 description: str,
-                                diff_preview: Optional[str] = None) -> None:
+                                diff_preview: Optional[str] = None,
+                                reason: Optional[str] = None,
+                                auth_mode: Optional[str] = None) -> None:
         """Send HITL confirmation request to user.
         
         For sensitive operations, display the operation details and
@@ -120,6 +122,8 @@ class BaseChannel(ABC):
             tool_name: Name of the tool requesting authorization
             description: Human-readable description of the operation
             diff_preview: Structured diff preview (for file operations)
+            reason: Human-readable safety reason for review
+            auth_mode: Current auth mode (supervised/consensus)
         """
         ...
     

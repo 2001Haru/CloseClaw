@@ -26,12 +26,16 @@ class TestMemoryFlushSession:
     def test_initialization(self, flush_session, temp_workspace):
         """Test session initialization."""
         assert flush_session.workspace_root == temp_workspace
-        assert flush_session.memory_dir == os.path.join(temp_workspace, "memory")
+        assert flush_session.memory_dir == os.path.join(temp_workspace, "CloseClaw Memory", "memory")
         assert os.path.exists(flush_session.memory_dir)
+        today = datetime.now().strftime("%Y-%m-%d") + ".md"
+        assert os.path.exists(os.path.join(flush_session.memory_dir, today))
     
     def test_should_trigger_flush_conditions(self, flush_session):
         """Test flush trigger conditions."""
-        # Should trigger at WARNING, 75-95%
+        # Should trigger whenever ContextManager reports WARNING
+        # (regardless of absolute ratio, because thresholds are configurable).
+        assert flush_session.should_trigger_flush("WARNING", 0.03) is True
         assert flush_session.should_trigger_flush("WARNING", 0.75) is True
         assert flush_session.should_trigger_flush("WARNING", 0.85) is True
         assert flush_session.should_trigger_flush("WARNING", 0.94) is True

@@ -129,7 +129,16 @@ class AuditLogger:
         )
 
 
+from .auth_reasoning import build_auth_reason
+from .guardian import ConsensusGuardian, GuardianDecision
+from .security_mode import SecurityMode, normalize_security_mode
+
 __all__ = [
     "AuditLogger",
+    "build_auth_reason",
+    "ConsensusGuardian",
+    "GuardianDecision",
+    "SecurityMode",
+    "normalize_security_mode",
 ]
 

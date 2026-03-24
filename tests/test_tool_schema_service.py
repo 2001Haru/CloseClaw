@@ -1,5 +1,6 @@
 """Tests for ToolSchemaService extraction."""
 
+from closeclaw.compatibility import ToolSpecV2
 from closeclaw.services.tool_schema_service import ToolSchemaService
 from closeclaw.types import Tool, ToolType
 
@@ -60,3 +61,27 @@ def test_format_tools_for_llm_supports_string_shorthand_param_shape():
     payload = service.format_tools_for_llm([tool])
 
     assert payload[0]["function"]["parameters"]["properties"]["query"]["type"] == "string"
+
+
+def test_format_tools_for_llm_supports_external_toolspec_v2():
+    service = ToolSchemaService()
+    spec = ToolSpecV2(
+        name="mcp_echo",
+        description="Echo via MCP",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+            },
+            "required": ["text"],
+        },
+        need_auth=False,
+        tool_type="websearch",
+        source="mcp",
+        source_ref="demo:mcp_echo",
+    )
+
+    payload = service.format_tools_for_llm([spec])
+
+    assert payload[0]["function"]["name"] == "mcp_echo"
+    assert payload[0]["function"]["parameters"]["required"] == ["text"]

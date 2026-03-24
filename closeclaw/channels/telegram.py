@@ -13,12 +13,16 @@ From Planning.md:
 
 import asyncio
 import logging
+import re
 from typing import Any, Optional
 
 from .base import BaseChannel
 from ..types import Message, ChannelType, AuthorizationResponse
 
 logger = logging.getLogger(__name__)
+
+TELEGRAM_MESSAGE_LIMIT = 4096
+TELEGRAM_SAFE_CHUNK_SIZE = 3500
 
 # Lazy import to avoid hard dependency
 try:
@@ -161,17 +165,66 @@ class TelegramChannel(BaseChannel):
         
         bot = self._app.bot
         
-        # Helper to safely send message with Markdown fallback
+        # Helper to split long messages to avoid Telegram 4096-char limit.
+        def chunk_text(text: str, limit: int = TELEGRAM_SAFE_CHUNK_SIZE) -> list[str]:
+            if len(text) <= limit:
+                return [text]
+
+            chunks: list[str] = []
+            remaining = text
+            while len(remaining) > limit:
+                split_at = remaining.rfind("\n", 0, limit)
+                if split_at <= 0:
+                    split_at = limit
+                chunks.append(remaining[:split_at])
+                remaining = remaining[split_at:].lstrip("\n")
+            if remaining:
+                chunks.append(remaining)
+            return chunks
+
+        def _is_markdown_related_error(err: Exception) -> bool:
+            text = str(err).lower()
+            return "parse entities" in text or "markdown" in text
+
+        def _is_message_too_long_error(err: Exception) -> bool:
+            return bool(re.search(r"message.*too long", str(err), flags=re.IGNORECASE))
+
+        # Helper to safely send message with Markdown fallback and chunking
         async def safe_send(text: str, **kwargs: Any) -> None:
-            try:
-                await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", **kwargs)
-            except Exception as e:
-                # If Markdown parsing fails (e.g., raw JSON with underscores), fallback to plain text
-                if "parse entities" in str(e).lower() or "markdown" in str(e).lower():
-                    logger.warning(f"Telegram Markdown parse error, falling back to plain text: {e}")
-                    await bot.send_message(chat_id=chat_id, text=text, **kwargs)
-                else:
-                    raise
+            if not text:
+                text = "OK"
+
+            chunks = chunk_text(text)
+            for idx, chunk in enumerate(chunks):
+                chunk_kwargs = dict(kwargs)
+                if idx > 0 and "reply_markup" in chunk_kwargs:
+                    chunk_kwargs.pop("reply_markup")
+
+                try:
+                    await bot.send_message(chat_id=chat_id, text=chunk, parse_mode="Markdown", **chunk_kwargs)
+                except Exception as e:
+                    if "chat not found" in str(e).lower():
+                        logger.warning("Telegram chat not found for chat_id=%s; dropping outbound message", chat_id)
+                        return
+
+                    if _is_markdown_related_error(e):
+                        logger.warning(f"Telegram Markdown parse error, falling back to plain text: {e}")
+                        try:
+                            await bot.send_message(chat_id=chat_id, text=chunk, **chunk_kwargs)
+                        except Exception as plain_err:
+                            if _is_message_too_long_error(plain_err) and len(chunk) > TELEGRAM_MESSAGE_LIMIT:
+                                for tiny in chunk_text(chunk, limit=TELEGRAM_MESSAGE_LIMIT):
+                                    await bot.send_message(chat_id=chat_id, text=tiny)
+                            elif "chat not found" in str(plain_err).lower():
+                                logger.warning("Telegram chat not found for chat_id=%s; dropping outbound message", chat_id)
+                                return
+                            else:
+                                raise
+                    elif _is_message_too_long_error(e) and len(chunk) > TELEGRAM_MESSAGE_LIMIT:
+                        for tiny in chunk_text(chunk, limit=TELEGRAM_MESSAGE_LIMIT):
+                            await bot.send_message(chat_id=chat_id, text=tiny)
+                    else:
+                        raise
         
         if resp_type in {"response", "assistant_message"}:
             text = response.get("response", "")
@@ -191,6 +244,12 @@ class TelegramChannel(BaseChannel):
                     status = tr.get("status", "?") if isinstance(tr, dict) else str(tr)
                     icon = "[OK]" if status == "success" else ("[TASK]" if status == "task_created" else "[ERR]")
                     parts.append(f"{icon} *Status:* `{status}`")
+
+                    if isinstance(tr, dict):
+                        metadata = tr.get("metadata") or {}
+                        if metadata.get("auth_mode") == "consensus":
+                            decision = metadata.get("guardian_decision") or "approve"
+                            parts.append(f"[GUARDIAN] {decision}")
             
             if text:
                 parts.append(text)
@@ -215,6 +274,15 @@ class TelegramChannel(BaseChannel):
                 text += f"\nResult: {result_str}"
             
             await safe_send(text)
+
+        elif resp_type == "tool_progress":
+            tool_name = response.get("tool_name", "unknown")
+            status = response.get("status", "unknown")
+            text = f"[TOOL] tool=`{tool_name}` status=`{status}`"
+            target_file = response.get("target_file")
+            if target_file:
+                text += f"\nfile=`{target_file}`"
+            await safe_send(text)
             
         elif resp_type == "error":
             error = response.get("error", "Unknown error")
@@ -224,7 +292,9 @@ class TelegramChannel(BaseChannel):
                                 auth_request_id: str,
                                 tool_name: str,
                                 description: str,
-                                diff_preview: Optional[str] = None) -> None:
+                                diff_preview: Optional[str] = None,
+                                reason: Optional[str] = None,
+                                auth_mode: Optional[str] = None) -> None:
         """Send HITL confirmation with Inline Keyboard buttons.
         
         Note: This is called internally via send_response() routing.
@@ -240,6 +310,8 @@ class TelegramChannel(BaseChannel):
         tool_name = response.get("tool_name", "unknown")
         description = response.get("description", "")
         diff_preview = response.get("diff_preview")
+        reason = response.get("reason")
+        auth_mode = response.get("auth_mode")
         
         # Build message text
         text_parts = [
@@ -247,6 +319,10 @@ class TelegramChannel(BaseChannel):
             f"Tool: `{tool_name}`",
             f"Description: {description}",
         ]
+        if auth_mode:
+            text_parts.append(f"Mode: `{auth_mode}`")
+        if reason:
+            text_parts.append(f"Reason: {reason}")
         
         if diff_preview:
             # Format diff for Telegram (use code block)

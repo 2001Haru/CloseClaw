@@ -6,11 +6,12 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional
 from zoneinfo import ZoneInfo
 
 from .types import HeartbeatDecision, HeartbeatTickResult
+from ..memory.workspace_layout import memory_root_dir
 
 logger = logging.getLogger(__name__)
 
@@ -187,8 +188,8 @@ class HeartbeatService:
         return result
 
     def _read_heartbeat_file(self) -> str:
-        """Read HEARTBEAT.md from workspace root."""
-        path = Path(self.workspace_root) / "HEARTBEAT.md"
+        """Read HEARTBEAT.md from CloseClaw Memory root."""
+        path = Path(memory_root_dir(self.workspace_root)) / "HEARTBEAT.md"
         if not path.exists():
             return ""
 
@@ -213,11 +214,14 @@ class HeartbeatService:
         if not self._quiet_hours_enabled or not self._quiet_hours_ranges:
             return False
 
-        try:
-            tz = ZoneInfo(self._quiet_hours_timezone)
-        except Exception:
-            logger.warning("Invalid quiet-hours timezone '%s'; ignoring quiet-hours gate", self._quiet_hours_timezone)
-            return False
+        if self._quiet_hours_timezone.upper() == "UTC":
+            tz = timezone.utc
+        else:
+            try:
+                tz = ZoneInfo(self._quiet_hours_timezone)
+            except Exception:
+                logger.warning("Invalid quiet-hours timezone '%s'; ignoring quiet-hours gate", self._quiet_hours_timezone)
+                return False
 
         now_local = datetime.now(tz)
         now_minutes = now_local.hour * 60 + now_local.minute

@@ -148,6 +148,7 @@ class AgentConfig:
     temperature: float = 0.0
     system_prompt: Optional[str] = None
     max_context_tokens: int = 100000  # Default safe limit for compaction
+    work_time_timezone: str = "UTC"
     
     # Phase 4: Context Management and LLM settings
     context_management: ContextManagementSettings = field(default_factory=ContextManagementSettings)
@@ -163,6 +164,7 @@ class AgentConfig:
             "temperature": self.temperature,
             "system_prompt": self.system_prompt,
             "max_context_tokens": self.max_context_tokens,
+            "work_time_timezone": self.work_time_timezone,
             "context_management": self.context_management.to_dict(),
             "llm": self.llm.to_dict(),
             "metadata": self.metadata,

@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..types import BackgroundTask, TaskStatus
+from ..memory.workspace_layout import DEFAULT_STATE_FILE_REL
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 class TaskManager:
     """Manages background task lifecycle for long-running tool executions."""
     
-    def __init__(self, state_file: str = "state.json"):
+    def __init__(self, state_file: str = DEFAULT_STATE_FILE_REL):
         """Initialize TaskManager.
         
         Args:

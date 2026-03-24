@@ -3,6 +3,7 @@
 import pytest
 
 from closeclaw.middleware import AuthPermissionMiddleware, MiddlewareChain
+from closeclaw.safety import SecurityMode
 from closeclaw.services import ToolExecutionService
 from closeclaw.tools.adaptation import ToolAdaptationLayer
 from closeclaw.types import Tool, ToolCall, ToolType
@@ -105,3 +106,54 @@ async def test_execute_safe_tool_success(service_context):
     assert result.status == "success"
     assert result.result == "content"
     assert result.metadata.get("source") == "native"
+
+
+@pytest.mark.asyncio
+async def test_consensus_allow_metadata_propagates_to_tool_result(sample_session):
+    class _Decision:
+        approved = True
+        reason_code = "SAFE"
+        comment = "looks good"
+
+    class _Guardian:
+        async def review(self, _payload):
+            return _Decision()
+
+    async def run_handler(**kwargs):
+        return "done"
+
+    tools = {
+        "run_cmd": Tool(
+            name="run_cmd",
+            description="Run command",
+            type=ToolType.SHELL,
+            need_auth=True,
+            handler=run_handler,
+            parameters={"command": {"type": "string"}},
+        )
+    }
+    chain = MiddlewareChain(
+        [
+            AuthPermissionMiddleware(
+                default_need_auth=False,
+                security_mode=SecurityMode.CONSENSUS,
+                consensus_guardian=_Guardian(),
+            )
+        ]
+    )
+    service = ToolExecutionService(
+        tools=tools,
+        middleware_chain=chain,
+        tool_adaptation_layer=ToolAdaptationLayer(),
+        session_getter=lambda: sample_session,
+        task_manager_getter=lambda: None,
+    )
+
+    result = await service.execute_tool_call(
+        ToolCall(tool_id="tc_consensus", name="run_cmd", arguments={"command": "echo hi"})
+    )
+
+    assert result.status == "success"
+    assert result.metadata.get("auth_mode") == "consensus"
+    assert result.metadata.get("reason_code") == "SAFE"
+    assert result.metadata.get("guardian_comment") == "looks good"

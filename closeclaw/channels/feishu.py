@@ -148,6 +148,19 @@ class FeishuChannel(BaseChannel):
         
         if resp_type == "response":
             text = response.get("response", "OK")
+            tool_results = response.get("tool_results", [])
+            lines: list[str] = [text]
+
+            if tool_results:
+                for tr in tool_results:
+                    if not isinstance(tr, dict):
+                        continue
+                    metadata = tr.get("metadata") or {}
+                    if metadata.get("auth_mode") == "consensus":
+                        decision = metadata.get("guardian_decision") or "approve"
+                        lines.append(f"[GUARDIAN] {decision}")
+
+            text = "\n".join(lines)
             await self._send_text_message(chat_id, text)
         
         elif resp_type == "auth_request":
@@ -166,6 +179,15 @@ class FeishuChannel(BaseChannel):
                 text += f"\nResult: {str(result)[:500]}"
             
             await self._send_text_message(chat_id, text)
+
+        elif resp_type == "tool_progress":
+            tool_name = response.get("tool_name", "unknown")
+            status = response.get("status", "unknown")
+            text = f"[TOOL] tool={tool_name} status={status}"
+            target_file = response.get("target_file")
+            if target_file:
+                text += f"\nfile={target_file}"
+            await self._send_text_message(chat_id, text)
         
         elif resp_type == "error":
             error = response.get("error", "Unknown error")
@@ -175,7 +197,9 @@ class FeishuChannel(BaseChannel):
                                 auth_request_id: str,
                                 tool_name: str,
                                 description: str,
-                                diff_preview: Optional[str] = None) -> None:
+                                diff_preview: Optional[str] = None,
+                                reason: Optional[str] = None,
+                                auth_mode: Optional[str] = None) -> None:
         """Send HITL confirmation via Feishu Interactive Card."""
         pass  # Implemented via send_response -> _send_auth_card
     
@@ -251,6 +275,8 @@ class FeishuChannel(BaseChannel):
         tool_name = response.get("tool_name", "unknown")
         description = response.get("description", "")
         diff_preview = response.get("diff_preview", "")
+        reason = response.get("reason", "")
+        auth_mode = response.get("auth_mode", "")
         
         # Build Interactive Card
         card = {
@@ -269,6 +295,28 @@ class FeishuChannel(BaseChannel):
                 },
             ],
         }
+
+        if auth_mode:
+            card["elements"].append(
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**Mode:** `{auth_mode}`",
+                    },
+                }
+            )
+
+        if reason:
+            card["elements"].append(
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": f"**Reason:** {reason}",
+                    },
+                }
+            )
         
         # Add diff preview if present
         if diff_preview:

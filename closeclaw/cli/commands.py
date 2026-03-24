@@ -7,6 +7,7 @@ Commands:
 """
 
 import asyncio
+import importlib.util
 import json
 import logging
 from pathlib import Path
@@ -19,8 +20,10 @@ from ..agents.task_manager import TaskManager
 from ..config import ConfigLoader
 from ..heartbeat import HeartbeatService
 from ..cron import CronService, CronSchedule
+from ..memory.workspace_layout import DEFAULT_STATE_FILE_REL
 from ..mcp import MCPClientPool
 from ..mcp.transport import MCPHttpClient, MCPStdioClient
+from ..providers.registry import PROVIDER_SPECS, find_provider_spec
 from ..types import TaskStatus
 
 logger = logging.getLogger(__name__)
@@ -29,7 +32,7 @@ logger = logging.getLogger(__name__)
 class CLITaskManager:
     """CLI interface for task management via state.json."""
     
-    def __init__(self, state_file: Path = Path("state.json")):
+    def __init__(self, state_file: Path = Path(DEFAULT_STATE_FILE_REL)):
         """Initialize CLI task manager.
         
         Args:
@@ -467,4 +470,235 @@ class CLICronManager:
         )
         result = await service.run_now(job_id)
         return result or {"status": "noop", "job_id": job_id}
+
+
+class CLIChannelHealthManager:
+    """CLI manager for channel health diagnostics."""
+
+    def __init__(self, config_file: Path = Path("config.yaml")) -> None:
+        self.config_file = config_file
+
+    def _load_config(self):
+        return ConfigLoader.load(str(self.config_file))
+
+    def get_health(self, channel_name: str | None = None) -> dict[str, Any]:
+        config = self._load_config()
+        target = (channel_name or "").strip().lower()
+
+        rows: list[dict[str, Any]] = []
+        for ch in config.channels:
+            ch_type = (ch.type or "").strip().lower()
+            if target and ch_type != target:
+                continue
+
+            dependency_ok, dependency_detail = self._dependency_status(ch_type)
+            config_ok, config_detail = self._config_status(ch_type, ch)
+            enabled = bool(ch.enabled)
+
+            if not enabled:
+                health = "disabled"
+            elif dependency_ok and config_ok:
+                health = "healthy"
+            else:
+                health = "degraded"
+
+            rows.append(
+                {
+                    "channel": ch_type,
+                    "enabled": enabled,
+                    "health": health,
+                    "dependency_ok": dependency_ok,
+                    "dependency_detail": dependency_detail,
+                    "config_ok": config_ok,
+                    "config_detail": config_detail,
+                }
+            )
+
+        summary = {
+            "total": len(rows),
+            "healthy": sum(1 for r in rows if r["health"] == "healthy"),
+            "degraded": sum(1 for r in rows if r["health"] == "degraded"),
+            "disabled": sum(1 for r in rows if r["health"] == "disabled"),
+        }
+        return {"summary": summary, "channels": rows}
+
+    @staticmethod
+    def format_health(snapshot: dict[str, Any], as_json: bool = False) -> str:
+        if as_json:
+            return json.dumps(snapshot, ensure_ascii=False, indent=2)
+
+        rows = snapshot.get("channels", [])
+        if not rows:
+            return "No channels configured."
+
+        table_rows = [
+            {
+                "channel": r["channel"],
+                "enabled": r["enabled"],
+                "health": r["health"],
+                "dep": r["dependency_ok"],
+                "config": r["config_ok"],
+                "dep_detail": r["dependency_detail"],
+                "config_detail": r["config_detail"],
+            }
+            for r in rows
+        ]
+        return tabulate(table_rows, headers="keys", tablefmt="grid")
+
+    @staticmethod
+    def _dependency_status(channel_type: str) -> tuple[bool, str]:
+        if channel_type == "cli":
+            return True, "builtin"
+        if channel_type == "telegram":
+            ok = importlib.util.find_spec("telegram") is not None
+            return ok, "python-telegram-bot"
+        if channel_type == "feishu":
+            ok = importlib.util.find_spec("httpx") is not None
+            return ok, "httpx"
+        if channel_type == "discord":
+            ok = importlib.util.find_spec("discord") is not None
+            return ok, "discord.py"
+        if channel_type == "whatsapp":
+            ok = importlib.util.find_spec("websockets") is not None
+            return ok, "websockets bridge"
+        if channel_type == "qq":
+            ok = importlib.util.find_spec("botpy") is not None
+            return ok, "qq-botpy"
+        return False, "unknown channel type"
+
+    @staticmethod
+    def _config_status(channel_type: str, ch: Any) -> tuple[bool, str]:
+        metadata = ch.metadata or {}
+
+        if channel_type == "cli":
+            return True, "ok"
+        if channel_type in {"telegram", "discord"}:
+            ok = bool(ch.token)
+            return ok, "token required"
+        if channel_type in {"feishu", "qq"}:
+            ok = bool(ch.token and ch.webhook_url)
+            return ok, "token+webhook_url required"
+        if channel_type == "whatsapp":
+            ok = bool(metadata.get("bridge_url") or ch.webhook_url)
+            return ok, "metadata.bridge_url or webhook_url required"
+
+        return False, "unknown channel type"
+
+
+class CLIProviderHealthManager:
+    """CLI manager for provider health diagnostics."""
+
+    def __init__(self, config_file: Path = Path("config.yaml")) -> None:
+        self.config_file = config_file
+
+    def _load_config(self):
+        return ConfigLoader.load(str(self.config_file))
+
+    def get_health(self, provider_name: str | None = None) -> dict[str, Any]:
+        config = self._load_config()
+        llm = config.llm
+        target = (provider_name or "").strip().lower()
+
+        active_spec = find_provider_spec(llm.provider, llm.model)
+
+        rows: list[dict[str, Any]] = []
+        specs = list(PROVIDER_SPECS)
+        for spec in specs:
+            if target and spec.name != target:
+                continue
+
+            dependency_ok, dependency_detail = self._dependency_status(spec.runtime)
+            config_ok, config_detail = self._config_status(spec.name, llm.provider, llm.api_key, llm.model)
+
+            is_active = spec.name == active_spec.name
+            health = "healthy" if (dependency_ok and config_ok) else "degraded"
+
+            rows.append(
+                {
+                    "provider": spec.name,
+                    "runtime": spec.runtime,
+                    "active": is_active,
+                    "health": health,
+                    "dependency_ok": dependency_ok,
+                    "dependency_detail": dependency_detail,
+                    "config_ok": config_ok,
+                    "config_detail": config_detail,
+                }
+            )
+
+        if not target and active_spec.name not in {r["provider"] for r in rows}:
+            dependency_ok, dependency_detail = self._dependency_status(active_spec.runtime)
+            config_ok, config_detail = self._config_status(active_spec.name, llm.provider, llm.api_key, llm.model)
+            rows.append(
+                {
+                    "provider": active_spec.name,
+                    "runtime": active_spec.runtime,
+                    "active": True,
+                    "health": "healthy" if (dependency_ok and config_ok) else "degraded",
+                    "dependency_ok": dependency_ok,
+                    "dependency_detail": dependency_detail,
+                    "config_ok": config_ok,
+                    "config_detail": config_detail,
+                }
+            )
+
+        summary = {
+            "active_provider": active_spec.name,
+            "total": len(rows),
+            "healthy": sum(1 for r in rows if r["health"] == "healthy"),
+            "degraded": sum(1 for r in rows if r["health"] == "degraded"),
+        }
+        return {"summary": summary, "providers": rows}
+
+    @staticmethod
+    def format_health(snapshot: dict[str, Any], as_json: bool = False) -> str:
+        if as_json:
+            return json.dumps(snapshot, ensure_ascii=False, indent=2)
+
+        rows = snapshot.get("providers", [])
+        if not rows:
+            return "No providers found."
+
+        table_rows = [
+            {
+                "provider": r["provider"],
+                "runtime": r["runtime"],
+                "active": r["active"],
+                "health": r["health"],
+                "dep": r["dependency_ok"],
+                "config": r["config_ok"],
+                "dep_detail": r["dependency_detail"],
+                "config_detail": r["config_detail"],
+            }
+            for r in rows
+        ]
+        return tabulate(table_rows, headers="keys", tablefmt="grid")
+
+    @staticmethod
+    def _dependency_status(runtime: str) -> tuple[bool, str]:
+        if runtime == "litellm":
+            ok = importlib.util.find_spec("litellm") is not None
+            return ok, "litellm"
+        if runtime == "openai_compatible":
+            ok = importlib.util.find_spec("httpx") is not None
+            return ok, "httpx"
+        return False, "unknown runtime"
+
+    @staticmethod
+    def _config_status(
+        spec_name: str,
+        configured_provider: str,
+        api_key: Optional[str],
+        model: str,
+    ) -> tuple[bool, str]:
+        provider_norm = (configured_provider or "").strip().lower()
+        model_ok = bool((model or "").strip())
+
+        if provider_norm in {"ollama"}:
+            return model_ok, "model required; api_key optional for ollama"
+
+        if spec_name in {provider_norm, "openai-compatible", "openai", "gemini", "anthropic"}:
+            return bool(model_ok and api_key), "model+api_key required"
+
+        return model_ok, "model required"
 

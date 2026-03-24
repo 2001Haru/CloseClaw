@@ -27,6 +27,9 @@ class ChannelType(str, Enum):
     TELEGRAM = "telegram"
     FEISHU = "feishu"
     CLI = "cli"
+    DISCORD = "discord"
+    WHATSAPP = "whatsapp"
+    QQ = "qq"
 
 
 class ToolType(str, Enum):

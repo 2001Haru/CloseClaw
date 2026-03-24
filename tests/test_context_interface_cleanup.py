@@ -1,5 +1,7 @@
 ﻿"""Regression tests for context-interface cleanup and recall prompt injection."""
 
+from pathlib import Path
+
 from closeclaw.agents.core import AgentCore
 from closeclaw.config import ConfigLoader
 from closeclaw.types import AgentConfig
@@ -29,6 +31,43 @@ def test_build_system_prompt_includes_memory_recall_policy(tmp_path):
     assert "You are a precise assistant." in prompt
     assert "[MEMORY RECALL POLICY]" in prompt
     assert "retrieve_memory" in prompt
+
+
+def test_build_system_prompt_includes_project_context_and_work_info(tmp_path):
+    """System prompt should include project context files and runtime work information."""
+    mem_root = Path(tmp_path) / "CloseClaw Memory"
+    mem_root.mkdir(parents=True, exist_ok=True)
+    (mem_root / "AGENTS.md").write_text("agent-instruction", encoding="utf-8")
+    (mem_root / "SOUL.md").write_text("personality", encoding="utf-8")
+    (mem_root / "USER.md").write_text("user-profile", encoding="utf-8")
+    (mem_root / "TOOLS.md").write_text("extension-tools", encoding="utf-8")
+    (mem_root / "SKILLS.md").write_text("skill-usage", encoding="utf-8")
+
+    config = AgentConfig(
+        model="openai/gpt-4",
+        system_prompt="Base system",
+    )
+    agent = AgentCore(
+        agent_id="test-agent",
+        llm_provider=_DummyLLM(),
+        config=config,
+        workspace_root=str(tmp_path),
+    )
+
+    prompt = agent._build_system_prompt()
+
+    assert "[PROJECT CONTEXT]" in prompt
+    assert "[AGENTS.md]" in prompt
+    assert "agent-instruction" in prompt
+    assert "[SOUL.md]" in prompt
+    assert "[USER.md]" in prompt
+    assert "[TOOLS.md]" in prompt
+    assert "[SKILLS.md]" in prompt
+    assert "skill-usage" in prompt
+    assert "[WORK INFORMATION]" in prompt
+    assert "current_time_utc:" in prompt
+    assert "workspace_root:" in prompt
+    assert "closeclaw_repository_root:" in prompt
 
 
 def test_build_config_syncs_legacy_max_context_tokens():

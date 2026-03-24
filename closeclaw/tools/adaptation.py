@@ -83,7 +83,6 @@ class ToolAdaptationLayer:
         """Initialize adaptation layer."""
         self._tool_metadata: dict[str, ToolMetadata] = {}
         self._long_running_tool_types = {
-            ToolType.WEBSEARCH,    # Web searches can take 5-30s
             ToolType.SHELL,        # Shell commands can take minutes
         }
     
@@ -237,7 +236,7 @@ class ToolAdaptationLayer:
         """
         # Default estimates by tool type
         type_estimates = {
-            ToolType.WEBSEARCH: 3.0,   # Web search typically 3-10s
+            ToolType.WEBSEARCH: 1.0,   # Default web search is stub/fast unless overridden
             ToolType.SHELL: 5.0,       # Shell can vary, assume longer
             ToolType.FILE: 0.5,        # File ops usually fast
         }

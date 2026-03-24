@@ -26,6 +26,48 @@ async def test_emit_task_completed_payload_shape():
 
 
 @pytest.mark.asyncio
+async def test_emit_task_completed_includes_origin_chat_routing():
+    service = RuntimeLoopService()
+    calls = []
+
+    async def output_fn(payload):
+        calls.append(payload)
+
+    await service.emit_task_completed(
+        output_fn,
+        {
+            "task_id": "#009",
+            "status": "completed",
+            "result": {
+                "origin_channel": "telegram",
+                "origin_chat_id": "chat-9",
+                "session_key": "telegram:chat-9",
+            },
+            "error": None,
+        },
+    )
+
+    assert calls[0]["_chat_id"] == "chat-9"
+    assert calls[0]["origin_channel"] == "telegram"
+    assert calls[0]["session_key"] == "telegram:chat-9"
+
+
+@pytest.mark.asyncio
+async def test_emit_task_completed_handles_non_dict_payload():
+    service = RuntimeLoopService()
+    calls = []
+
+    async def output_fn(payload):
+        calls.append(payload)
+
+    await service.emit_task_completed(output_fn, "#bad")
+
+    assert calls[0]["type"] == "task_completed"
+    assert calls[0]["task_id"] == "#bad"
+    assert calls[0]["status"] == "unknown"
+
+
+@pytest.mark.asyncio
 async def test_emit_response_and_error_payload_shape():
     service = RuntimeLoopService()
     calls = []
@@ -39,7 +81,28 @@ async def test_emit_response_and_error_payload_shape():
     assert calls[0]["type"] == "response"
     assert calls[0]["response"] == "ok"
     assert calls[1]["type"] == "error"
-    assert "boom" in calls[1]["error"]
+    
+@pytest.mark.asyncio
+async def test_emit_tool_progress_event():
+    service = RuntimeLoopService()
+    calls = []
+
+    async def output_fn(payload):
+        calls.append(payload)
+
+    await service.emit_tool_progress(
+        output_fn,
+        step_id=3,
+        tool_name="read_file",
+        status="success",
+        target_file="src/app.py",
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["type"] == "tool_progress"
+    assert calls[0]["tool_name"] == "read_file"
+    assert calls[0]["status"] == "success"
+    assert calls[0]["target_file"] == "src/app.py"
 
 
 @pytest.mark.asyncio

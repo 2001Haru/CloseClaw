@@ -37,7 +37,34 @@ def test_dispatches_runner_for_non_cli_subcommands(monkeypatch):
     assert called["runner"] == 1
 
 
-@pytest.mark.parametrize("subcmd", ["tasks", "task", "cancel", "summary", "mcp-health"])
+@pytest.mark.parametrize(
+    "subcmd",
+    [
+        "agent",
+        "gateway",
+        "tasks",
+        "list",
+        "task",
+        "show",
+        "cancel",
+        "stop",
+        "summary",
+        "mcp-health",
+        "mcp",
+        "channel-health",
+        "channel",
+        "provider-health",
+        "provider",
+        "heartbeat-trigger",
+        "heartbeat-status",
+        "cron-add",
+        "cron-list",
+        "cron-remove",
+        "cron-enable",
+        "cron-disable",
+        "cron-run-now",
+    ],
+)
 def test_all_known_cli_subcommands_dispatch_to_cli(monkeypatch, subcmd):
     called = {"cli": 0, "runner": 0}
 

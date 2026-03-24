@@ -362,6 +362,15 @@ How to respond:
             )
         if tool_result.status == "auth_required":
             return "Operation requires user authorization. Waiting for approval."
+        if tool_result.status == "task_created":
+            if isinstance(tool_result.result, dict):
+                task_id = tool_result.result.get("task_id")
+                message = tool_result.result.get("message")
+                if message:
+                    return str(message)
+                if task_id:
+                    return f"Background task created: {task_id}."
+            return "Background task created and queued for execution."
         return f"Error or Blocked ({tool_result.status}): {tool_result.error}"
 
     def append_formatted_history_messages(
@@ -374,7 +383,13 @@ How to respond:
     ) -> None:
         """Append conversation history in OpenAI-compatible role format."""
         for msg in message_history:
-            role = "user" if msg.sender_id != agent_id else "assistant"
+            role_override = None
+            if isinstance(getattr(msg, "metadata", None), dict):
+                candidate = str(msg.metadata.get("role", "")).strip().lower()
+                if candidate in {"system", "user", "assistant"}:
+                    role_override = candidate
+
+            role = role_override or ("user" if msg.sender_id != agent_id else "assistant")
 
             msg_dict: dict[str, Any] = {
                 "role": role,

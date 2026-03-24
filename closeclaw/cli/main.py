@@ -6,7 +6,15 @@ import logging
 import sys
 from pathlib import Path
 
-from .commands import CLITaskManager, MCPStatusManager, CLIHeartbeatManager, CLICronManager
+from .commands import (
+    CLITaskManager,
+    MCPStatusManager,
+    CLIHeartbeatManager,
+    CLICronManager,
+    CLIChannelHealthManager,
+    CLIProviderHealthManager,
+)
+from ..memory.workspace_layout import DEFAULT_STATE_FILE_REL
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +27,30 @@ def create_parser() -> argparse.ArgumentParser:
     )
     
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Command: agent - start CloseClaw runtime in current repository directory
+    agent_parser = subparsers.add_parser(
+        "agent",
+        help="Start CloseClaw agent (run from repository directory)",
+    )
+    agent_parser.add_argument(
+        "-c", "--config",
+        type=str,
+        default="config.yaml",
+        help="Path to config.yaml file (default: ./config.yaml)",
+    )
+
+    # Command: gateway - start CloseClaw runtime for non-CLI channels only
+    gateway_parser = subparsers.add_parser(
+        "gateway",
+        help="Start CloseClaw gateway (non-CLI channels only)",
+    )
+    gateway_parser.add_argument(
+        "-c", "--config",
+        type=str,
+        default="config.yaml",
+        help="Path to config.yaml file (default: ./config.yaml)",
+    )
     
     # Command: tasks - List all tasks
     tasks_parser = subparsers.add_parser(
@@ -33,8 +65,25 @@ def create_parser() -> argparse.ArgumentParser:
     tasks_parser.add_argument(
         "-s", "--state",
         type=str,
-        default="state.json",
-        help="Path to state.json file (default: state.json)",
+        default=DEFAULT_STATE_FILE_REL,
+        help="Path to state.json file (default: CloseClaw Memory/state.json)",
+    )
+
+    # Alias: list -> tasks
+    list_parser = subparsers.add_parser(
+        "list",
+        help="Alias of tasks",
+    )
+    list_parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Show detailed information",
+    )
+    list_parser.add_argument(
+        "-s", "--state",
+        type=str,
+        default=DEFAULT_STATE_FILE_REL,
+        help="Path to state.json file (default: CloseClaw Memory/state.json)",
     )
     
     # Command: task - Query single task
@@ -50,7 +99,24 @@ def create_parser() -> argparse.ArgumentParser:
     task_parser.add_argument(
         "-s", "--state",
         type=str,
-        default="state.json",
+        default=DEFAULT_STATE_FILE_REL,
+        help="Path to state.json file",
+    )
+
+    # Alias: show -> task
+    show_parser = subparsers.add_parser(
+        "show",
+        help="Alias of task",
+    )
+    show_parser.add_argument(
+        "task_id",
+        type=str,
+        help="Task ID (e.g., #001 or 001)",
+    )
+    show_parser.add_argument(
+        "-s", "--state",
+        type=str,
+        default=DEFAULT_STATE_FILE_REL,
         help="Path to state.json file",
     )
     
@@ -67,7 +133,24 @@ def create_parser() -> argparse.ArgumentParser:
     cancel_parser.add_argument(
         "-s", "--state",
         type=str,
-        default="state.json",
+        default=DEFAULT_STATE_FILE_REL,
+        help="Path to state.json file",
+    )
+
+    # Alias: stop -> cancel
+    stop_parser = subparsers.add_parser(
+        "stop",
+        help="Alias of cancel",
+    )
+    stop_parser.add_argument(
+        "task_id",
+        type=str,
+        help="Task ID to cancel",
+    )
+    stop_parser.add_argument(
+        "-s", "--state",
+        type=str,
+        default=DEFAULT_STATE_FILE_REL,
         help="Path to state.json file",
     )
     
@@ -79,7 +162,7 @@ def create_parser() -> argparse.ArgumentParser:
     summary_parser.add_argument(
         "-s", "--state",
         type=str,
-        default="state.json",
+        default=DEFAULT_STATE_FILE_REL,
         help="Path to state.json file",
     )
 
@@ -95,6 +178,115 @@ def create_parser() -> argparse.ArgumentParser:
         help="Path to config.yaml file",
     )
     mcp_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
+    # Alias: mcp -> mcp-health
+    mcp_alias_parser = subparsers.add_parser(
+        "mcp",
+        help="Alias of mcp-health",
+    )
+    mcp_alias_parser.add_argument(
+        "-c", "--config",
+        type=str,
+        default="config.yaml",
+        help="Path to config.yaml file",
+    )
+    mcp_alias_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
+    # Command: channel-health - Show channel dependency/config health
+    ch_health_parser = subparsers.add_parser(
+        "channel-health",
+        help="Show channel health checks (dependency and config)",
+    )
+    ch_health_parser.add_argument(
+        "-c", "--config",
+        type=str,
+        default="config.yaml",
+        help="Path to config.yaml file",
+    )
+    ch_health_parser.add_argument(
+        "--name",
+        type=str,
+        default="",
+        help="Filter by channel name (e.g., telegram, discord)",
+    )
+    ch_health_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
+    # Alias: channel -> channel-health
+    channel_alias_parser = subparsers.add_parser(
+        "channel",
+        help="Alias of channel-health",
+    )
+    channel_alias_parser.add_argument(
+        "-c", "--config",
+        type=str,
+        default="config.yaml",
+        help="Path to config.yaml file",
+    )
+    channel_alias_parser.add_argument(
+        "--name",
+        type=str,
+        default="",
+        help="Filter by channel name (e.g., telegram, discord)",
+    )
+    channel_alias_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
+    # Command: provider-health - Show provider dependency/config health
+    provider_health_parser = subparsers.add_parser(
+        "provider-health",
+        help="Show provider health checks (runtime dependency and config)",
+    )
+    provider_health_parser.add_argument(
+        "-c", "--config",
+        type=str,
+        default="config.yaml",
+        help="Path to config.yaml file",
+    )
+    provider_health_parser.add_argument(
+        "--name",
+        type=str,
+        default="",
+        help="Filter by provider name (e.g., openai, gemini)",
+    )
+    provider_health_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
+    # Alias: provider -> provider-health
+    provider_alias_parser = subparsers.add_parser(
+        "provider",
+        help="Alias of provider-health",
+    )
+    provider_alias_parser.add_argument(
+        "-c", "--config",
+        type=str,
+        default="config.yaml",
+        help="Path to config.yaml file",
+    )
+    provider_alias_parser.add_argument(
+        "--name",
+        type=str,
+        default="",
+        help="Filter by provider name (e.g., openai, gemini)",
+    )
+    provider_alias_parser.add_argument(
         "--json",
         action="store_true",
         help="Output as JSON",
@@ -201,23 +393,36 @@ async def main():
     
     # Execute command
     try:
-        if args.command in {"tasks", "task", "cancel", "summary"}:
+        if args.command in {"tasks", "list", "task", "show", "cancel", "stop", "summary"}:
             # Initialize task CLI manager only for task-related commands.
             state_file = Path(args.state)
             cli_manager = CLITaskManager(state_file=state_file)
             await cli_manager.initialize_from_state()
 
-        if args.command == "tasks":
+        if args.command in {"agent", "gateway"}:
+            config_path = Path(args.config)
+            if not config_path.exists():
+                print(
+                    f"Error: {args.config} not found in current directory. "
+                    f"Run 'closeclaw {args.command}' from repository root or pass --config."
+                )
+                return 1
+
+            from ..runner import run_agent
+            await run_agent(str(config_path), run_mode=args.command)
+            return 0
+
+        if args.command in {"tasks", "list"}:
             result = cli_manager.list_tasks(verbose=args.verbose)
             print(result)
             return 0
         
-        elif args.command == "task":
+        elif args.command in {"task", "show"}:
             result = cli_manager.get_task_status(args.task_id)
             print(result)
             return 0
         
-        elif args.command == "cancel":
+        elif args.command in {"cancel", "stop"}:
             result = await cli_manager.cancel_task(args.task_id)
             print(result)
             return 0
@@ -227,7 +432,7 @@ async def main():
             print(result)
             return 0
 
-        elif args.command == "mcp-health":
+        elif args.command in {"mcp-health", "mcp"}:
             mcp_manager = MCPStatusManager()
             try:
                 await mcp_manager.initialize_from_config(Path(args.config))
@@ -236,6 +441,18 @@ async def main():
                 return 0
             finally:
                 await mcp_manager.close()
+
+        elif args.command in {"channel-health", "channel"}:
+            manager = CLIChannelHealthManager(config_file=Path(args.config))
+            snapshot = manager.get_health(channel_name=args.name)
+            print(CLIChannelHealthManager.format_health(snapshot, as_json=args.json))
+            return 0
+
+        elif args.command in {"provider-health", "provider"}:
+            manager = CLIProviderHealthManager(config_file=Path(args.config))
+            snapshot = manager.get_health(provider_name=args.name)
+            print(CLIProviderHealthManager.format_health(snapshot, as_json=args.json))
+            return 0
 
         elif args.command == "heartbeat-trigger":
             hb_manager = CLIHeartbeatManager(config_file=Path(args.config))

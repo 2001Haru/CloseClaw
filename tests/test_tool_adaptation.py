@@ -107,15 +107,15 @@ class TestToolAdaptationLayer:
         assert metadata.should_use_background_task() is False
     
     def test_auto_classify_websearch_tool(self, adapter, sample_tools):
-        """Test: WEBSEARCH tools auto-classified as async."""
+        """Test: WEBSEARCH tools default to sync unless marked slow."""
         tool = sample_tools["slow"]
         
         # Register without metadata - should auto-classify
         adapter.register_tool_metadata(tool)
         
         metadata = adapter.get_tool_metadata("slow_op")
-        assert metadata.execution_mode == ExecutionMode.ASYNC_BG
-        logger.info("WEBSEARCH tool auto-classified as async")
+        assert metadata.execution_mode == ExecutionMode.SYNC
+        logger.info("WEBSEARCH tool default-classified as sync")
     
     @pytest.mark.asyncio
     async def test_execute_tool_call_sync_mode(self, adapter, sample_tools):

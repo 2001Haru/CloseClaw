@@ -220,3 +220,14 @@ class MCPClientPool:
             ok,
             elapsed_ms,
         )
+
+    async def close_all(self) -> None:
+        """Close all registered clients that expose async close()."""
+        for server_id, client in list(self._clients.items()):
+            close_fn = getattr(client, "close", None)
+            if not callable(close_fn):
+                continue
+            try:
+                await close_fn()
+            except Exception as exc:
+                logger.debug("Ignoring MCP client close error for server=%s: %s", server_id, exc)

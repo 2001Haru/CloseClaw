@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 import yaml
 
+from .memory.workspace_layout import DEFAULT_STATE_FILE_REL, DEFAULT_AUDIT_LOG_REL
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,12 +60,15 @@ class SafetyConfig:
     # Backward-compatible alias for older tests/configs.
     enable_hitl: bool = True
     default_need_auth: bool = False
+    security_mode: str = "supervised"
+    consensus_guardian_timeout_seconds: float = 20.0
+    consensus_guardian_prompt: Optional[str] = None
     command_blacklist_enabled: bool = True
     custom_blacklist_rules: list[str] = field(default_factory=list)
     # Backward-compatible alias for older tests/configs.
     enable_audit_log: bool = True
     audit_log_enabled: bool = True
-    audit_log_path: str = "audit.log"
+    audit_log_path: str = DEFAULT_AUDIT_LOG_REL
     audit_log_retention_days: int = 90
     
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +76,9 @@ class SafetyConfig:
             "admin_user_ids": self.admin_user_ids,
             "enable_hitl": self.enable_hitl,
             "default_need_auth": self.default_need_auth,
+            "security_mode": self.security_mode,
+            "consensus_guardian_timeout_seconds": self.consensus_guardian_timeout_seconds,
+            "consensus_guardian_prompt": self.consensus_guardian_prompt,
             "command_blacklist_enabled": self.command_blacklist_enabled,
             "custom_blacklist_rules": self.custom_blacklist_rules,
             "enable_audit_log": self.enable_audit_log,
@@ -104,8 +112,8 @@ class ContextManagementConfig:
 
 
 @dataclass
-class Phase5TelemetryConfig:
-    """Phase 5 telemetry configuration."""
+class OrchestratorTelemetryConfig:
+    """Orchestrator telemetry configuration."""
     enabled: bool = True
     log_actions: bool = True
 
@@ -117,8 +125,8 @@ class Phase5TelemetryConfig:
 
 
 @dataclass
-class Phase5RolloutConfig:
-    """Phase 5 rollout configuration (P1 uses allowlist + kill-switch)."""
+class OrchestratorRolloutConfig:
+    """Orchestrator rollout configuration (P1 uses allowlist + kill-switch)."""
     mode: str = "session_allowlist"  # off | session_allowlist
     session_allowlist: list[str] = field(default_factory=list)
 
@@ -130,14 +138,14 @@ class Phase5RolloutConfig:
 
 
 @dataclass
-class Phase5Config:
-    """Phase 5 orchestrator controls."""
+class OrchestratorConfig:
+    """Orchestrator controls."""
     max_steps: int = 6
     max_tokens_per_run: int = 120000
     max_wall_time_seconds: int = 45
     no_progress_limit: int = 2
-    telemetry: Phase5TelemetryConfig = field(default_factory=Phase5TelemetryConfig)
-    rollout: Phase5RolloutConfig = field(default_factory=Phase5RolloutConfig)
+    telemetry: OrchestratorTelemetryConfig = field(default_factory=OrchestratorTelemetryConfig)
+    rollout: OrchestratorRolloutConfig = field(default_factory=OrchestratorRolloutConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -242,6 +250,24 @@ class CronConfig:
 
 
 @dataclass
+class WebSearchConfig:
+    """Web search provider configuration."""
+
+    enabled: bool = False
+    provider: str = "brave"
+    brave_api_key: Optional[str] = None
+    timeout_seconds: int = 30
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "provider": self.provider,
+            "brave_api_key": self.brave_api_key,
+            "timeout_seconds": self.timeout_seconds,
+        }
+
+
+@dataclass
 class CloseCrawlConfig:
     """Main CloseClaw configuration."""
     agent_id: str = "closeclaw-agent"
@@ -253,13 +279,15 @@ class CloseCrawlConfig:
     timeout_seconds: int = 300
     system_prompt: Optional[str] = None
     max_context_tokens: int = 100000  # Default 100k, governs auto-compaction
+    work_time_timezone: str = "UTC"
     log_level: str = "INFO"
-    state_file: str = "state.json"
+    state_file: str = DEFAULT_STATE_FILE_REL
     interaction_log_file: str = "interaction.md"
     context_management: ContextManagementConfig = field(default_factory=ContextManagementConfig)
-    phase5: Phase5Config = field(default_factory=Phase5Config)
+    orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     cron: CronConfig = field(default_factory=CronConfig)
+    web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
     
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -272,18 +300,39 @@ class CloseCrawlConfig:
             "timeout_seconds": self.timeout_seconds,
             "system_prompt": self.system_prompt,
             "max_context_tokens": self.max_context_tokens,
+            "work_time_timezone": self.work_time_timezone,
             "log_level": self.log_level,
             "state_file": self.state_file,
             "interaction_log_file": self.interaction_log_file,
             "context_management": self.context_management.to_dict(),
-            "phase5": self.phase5.to_dict(),
+            "orchestrator": self.orchestrator.to_dict(),
             "heartbeat": self.heartbeat.to_dict(),
             "cron": self.cron.to_dict(),
+            "web_search": self.web_search.to_dict(),
         }
 
 
 class ConfigLoader:
     """Load and validate configuration from YAML."""
+
+    @staticmethod
+    def _resolve_state_file(raw_config: dict[str, Any]) -> str:
+        """Resolve state file path with backward-compatible upgrade behavior."""
+        raw_state_file = raw_config.get("state_file")
+        if raw_state_file is None:
+            return DEFAULT_STATE_FILE_REL
+
+        state_file = str(raw_state_file).strip()
+        legacy_defaults = {"state.json", "./state.json", ".\\state.json"}
+        if state_file in legacy_defaults:
+            logger.warning(
+                "Detected legacy state_file=%s. Upgrading to %s.",
+                state_file,
+                DEFAULT_STATE_FILE_REL,
+            )
+            return DEFAULT_STATE_FILE_REL
+
+        return state_file
 
     @staticmethod
     def _resolve_workspace_root(raw_config: dict[str, Any], config_path: Optional[str] = None) -> str:
@@ -421,11 +470,14 @@ class ConfigLoader:
             admin_user_ids=safety_raw.get("admin_user_ids", []),
             enable_hitl=bool(enable_hitl),
             default_need_auth=default_need_auth,
+            security_mode=str(safety_raw.get("security_mode", "supervised")),
+            consensus_guardian_timeout_seconds=float(safety_raw.get("consensus_guardian_timeout_seconds", 20.0)),
+            consensus_guardian_prompt=safety_raw.get("consensus_guardian_prompt"),
             command_blacklist_enabled=safety_raw.get("command_blacklist_enabled", True),
             custom_blacklist_rules=safety_raw.get("custom_blacklist_rules", []),
             enable_audit_log=enable_audit_log,
             audit_log_enabled=enable_audit_log,
-            audit_log_path=safety_raw.get("audit_log_path", "audit.log"),
+            audit_log_path=safety_raw.get("audit_log_path", DEFAULT_AUDIT_LOG_REL),
             audit_log_retention_days=safety_raw.get("audit_log_retention_days", 90),
         )
         
@@ -452,23 +504,27 @@ class ConfigLoader:
             retention_days=cm_raw.get("retention_days", 90),
         )
 
-        # Phase 5 config
-        p5_raw = raw_config.get("phase5", {})
-        p5_telemetry_raw = p5_raw.get("telemetry", {})
-        p5_rollout_raw = p5_raw.get("rollout", {})
+        # Orchestrator config (legacy key: phase5)
+        orchestrator_raw = raw_config.get("orchestrator")
+        if orchestrator_raw is None:
+            orchestrator_raw = raw_config.get("phase5", {})
+            if "phase5" in raw_config:
+                logger.warning("Detected legacy config key 'phase5'. Please rename it to 'orchestrator'.")
+        orchestrator_telemetry_raw = orchestrator_raw.get("telemetry", {})
+        orchestrator_rollout_raw = orchestrator_raw.get("rollout", {})
 
-        phase5 = Phase5Config(
-            max_steps=p5_raw.get("max_steps", 6),
-            max_tokens_per_run=p5_raw.get("max_tokens_per_run", 120000),
-            max_wall_time_seconds=p5_raw.get("max_wall_time_seconds", 45),
-            no_progress_limit=p5_raw.get("no_progress_limit", 2),
-            telemetry=Phase5TelemetryConfig(
-                enabled=p5_telemetry_raw.get("enabled", True),
-                log_actions=p5_telemetry_raw.get("log_actions", True),
+        orchestrator = OrchestratorConfig(
+            max_steps=orchestrator_raw.get("max_steps", 6),
+            max_tokens_per_run=orchestrator_raw.get("max_tokens_per_run", 120000),
+            max_wall_time_seconds=orchestrator_raw.get("max_wall_time_seconds", 45),
+            no_progress_limit=orchestrator_raw.get("no_progress_limit", 2),
+            telemetry=OrchestratorTelemetryConfig(
+                enabled=orchestrator_telemetry_raw.get("enabled", True),
+                log_actions=orchestrator_telemetry_raw.get("log_actions", True),
             ),
-            rollout=Phase5RolloutConfig(
-                mode=p5_rollout_raw.get("mode", "session_allowlist"),
-                session_allowlist=p5_rollout_raw.get("session_allowlist", []),
+            rollout=OrchestratorRolloutConfig(
+                mode=orchestrator_rollout_raw.get("mode", "session_allowlist"),
+                session_allowlist=orchestrator_rollout_raw.get("session_allowlist", []),
             ),
         )
 
@@ -506,6 +562,14 @@ class ConfigLoader:
             store_file=cron_raw.get("store_file", "cron_jobs.json"),
             default_timezone=cron_raw.get("default_timezone", "UTC"),
         )
+
+        web_search_raw = raw_config.get("web_search", {})
+        web_search = WebSearchConfig(
+            enabled=web_search_raw.get("enabled", False),
+            provider=web_search_raw.get("provider", "brave"),
+            brave_api_key=web_search_raw.get("brave_api_key"),
+            timeout_seconds=web_search_raw.get("timeout_seconds", 30),
+        )
         
         # Main config
         agent_raw = raw_config.get("agent", {})
@@ -521,13 +585,15 @@ class ConfigLoader:
             timeout_seconds=raw_config.get("timeout_seconds", agent_raw.get("timeout_seconds", 300)),
             system_prompt=raw_config.get("system_prompt"),
             max_context_tokens=context_management.max_tokens,
+            work_time_timezone=raw_config.get("work_time_timezone", "UTC"),
             log_level=raw_config.get("log_level", "INFO"),
-            state_file=raw_config.get("state_file", "state.json"),
+            state_file=ConfigLoader._resolve_state_file(raw_config),
             interaction_log_file=raw_config.get("interaction_log_file", "interaction.md"),
             context_management=context_management,
-            phase5=phase5,
+            orchestrator=orchestrator,
             heartbeat=heartbeat,
             cron=cron,
+            web_search=web_search,
         )
         
         return config
@@ -553,6 +619,13 @@ llm:
   temperature: 0.0
   max_tokens: 2000
   timeout_seconds: 60
+
+# Optional web search provider settings
+web_search:
+    enabled: false
+    provider: "brave"
+    brave_api_key: ${BRAVE_SEARCH_API_KEY}
+    timeout_seconds: 30
 
 # Channels configuration (optional)
 channels:
@@ -585,7 +658,7 @@ safety:
   
   # Audit logging
   audit_log_enabled: true
-  audit_log_path: "audit.log"
+    audit_log_path: "CloseClaw Memory/audit.log"
 
 # Agent loop configuration
 max_iterations: 10
@@ -603,7 +676,7 @@ system_prompt: |
 log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
 
 # State persistence
-state_file: "state.json"
+state_file: "CloseClaw Memory/state.json"
 interaction_log_file: "interaction.md"
 """
         

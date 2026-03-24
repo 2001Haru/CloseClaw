@@ -4,7 +4,7 @@ Uses httpx.AsyncClient for non-blocking HTTP requests.
 """
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
@@ -12,6 +12,27 @@ from .base import tool
 from ..types import ToolType
 
 logger = logging.getLogger(__name__)
+
+
+_web_search_enabled = False
+_web_search_provider = "brave"
+_brave_api_key: Optional[str] = None
+_web_search_timeout_seconds = 30
+
+
+def configure_web_search(
+    *,
+    enabled: bool = False,
+    provider: str = "brave",
+    brave_api_key: Optional[str] = None,
+    timeout_seconds: int = 30,
+) -> None:
+    """Configure runtime web search provider settings."""
+    global _web_search_enabled, _web_search_provider, _brave_api_key, _web_search_timeout_seconds
+    _web_search_enabled = bool(enabled)
+    _web_search_provider = (provider or "brave").strip().lower()
+    _brave_api_key = (brave_api_key or "").strip() or None
+    _web_search_timeout_seconds = max(1, int(timeout_seconds))
 
 
 @tool(
@@ -31,27 +52,94 @@ logger = logging.getLogger(__name__)
     }
 )
 async def web_search_impl(query: str, max_results: int = 5) -> list[dict[str, Any]]:
-    """Search the web.
-    
-    Note: This is a stub. For production, integrate with:
-    - Google Custom Search API
-    - Bing Search API
-    - DuckDuckGo API
-    
-    Returns:
-        List of search results with title, url, snippet
-    """
+    """Search the web using configured provider (Brave Search API)."""
     logger.info(f"Web search: {query} (max_results={max_results})")
-    
-    # Stub: return placeholder results
-    # TODO: Integrate with real search API based on user config
-    return [
-        {
-            "title": f"Search results for: {query}",
-            "url": "https://example.com/search",
-            "snippet": "Web search API not configured. Set up a search provider in config.yaml.",
-        }
-    ]
+
+    if not _web_search_enabled:
+        return [
+            {
+                "title": f"Search disabled for: {query}",
+                "url": "https://search.brave.com/",
+                "snippet": (
+                    "Web search is disabled. Set web_search.enabled=true and provide "
+                    "web_search.brave_api_key in config.yaml."
+                ),
+            }
+        ]
+
+    if _web_search_provider != "brave":
+        return [
+            {
+                "title": f"Unsupported search provider for: {query}",
+                "url": "https://search.brave.com/",
+                "snippet": (
+                    f"Configured provider '{_web_search_provider}' is not supported yet. "
+                    "Use provider='brave'."
+                ),
+            }
+        ]
+
+    if not _brave_api_key:
+        return [
+            {
+                "title": f"Search key missing for: {query}",
+                "url": "https://search.brave.com/",
+                "snippet": (
+                    "Brave Search API key not configured. Add web_search.brave_api_key in config.yaml."
+                ),
+            }
+        ]
+
+    try:
+        count = max(1, min(int(max_results), 20))
+        async with httpx.AsyncClient(
+            timeout=float(_web_search_timeout_seconds),
+            follow_redirects=True,
+            headers={
+                "Accept": "application/json",
+                "X-Subscription-Token": _brave_api_key,
+                "User-Agent": "CloseClaw/0.1",
+            },
+        ) as client:
+            response = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={"q": query, "count": count},
+            )
+            response.raise_for_status()
+            payload = response.json() if response.content else {}
+
+        results = payload.get("web", {}).get("results", [])
+        normalized: list[dict[str, Any]] = []
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            normalized.append(
+                {
+                    "title": item.get("title") or "(no title)",
+                    "url": item.get("url") or "",
+                    "snippet": item.get("description") or "",
+                }
+            )
+
+        if not normalized:
+            return [
+                {
+                    "title": f"No results for: {query}",
+                    "url": "https://search.brave.com/",
+                    "snippet": "Brave Search returned no web results.",
+                }
+            ]
+
+        return normalized
+    except Exception as e:
+        logger.error(f"Web search error: {e}")
+        return [
+            {
+                "title": f"Web search error for: {query}",
+                "url": "https://search.brave.com/",
+                "snippet": f"Error: {str(e)}",
+            }
+        ]
 
 
 @tool(

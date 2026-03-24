@@ -50,7 +50,7 @@ async def test_phase5_output_contract_success_path(temp_workspace):
             return "direct answer", None
 
     config = AgentConfig(model="openai/gpt-4", temperature=0.0)
-    config.metadata["phase5"] = {"max_steps": 4}
+    config.metadata["orchestrator"] = {"max_steps": 4}
 
     agent = AgentCore(
         agent_id="agent_phase5_contract_success",
@@ -84,7 +84,7 @@ async def test_phase5_output_contract_no_progress_path(temp_workspace):
             return "trying", [ToolCall(tool_id=f"tc_{len(messages)}", name="always_fail", arguments={})]
 
     config = AgentConfig(model="openai/gpt-4", temperature=0.0)
-    config.metadata["phase5"] = {
+    config.metadata["orchestrator"] = {
         "max_steps": 6,
         "no_progress_limit": 2,
     }
@@ -146,7 +146,7 @@ async def test_phase5_output_contract_auth_required_path(temp_workspace):
             }
 
     config = AgentConfig(model="openai/gpt-4", temperature=0.0)
-    config.metadata["phase5"] = {"max_steps": 4}
+    config.metadata["orchestrator"] = {"max_steps": 4}
 
     agent = AgentCore(
         agent_id="agent_phase5_contract_auth",

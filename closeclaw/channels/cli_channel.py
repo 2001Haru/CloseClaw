@@ -50,54 +50,84 @@ class CLIChannel(BaseChannel):
         self.user_id = user_id
         self.user_name = user_name
         self._message_counter = 0
+        self._incoming_queue: asyncio.Queue[Optional[Message]] = asyncio.Queue()
+        self._stdin_task: Optional[asyncio.Task] = None
+        # Input gate controls when the next `You >` prompt is allowed.
+        # It starts blocked and is opened by receive_message/send_response.
+        self._input_gate = asyncio.Event()
     
     async def start(self) -> None:
         """Start CLI channel."""
         self._running = True
         self._print_banner()
+        self._stdin_task = asyncio.create_task(self._stdin_loop())
         logger.info("CLI channel started")
     
     async def stop(self) -> None:
         """Stop CLI channel."""
         self._running = False
+        if self._stdin_task:
+            self._stdin_task.cancel()
+            try:
+                await self._stdin_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                self._stdin_task = None
         print(f"\n{Colors.GRAY}[CloseClaw] Session ended.{Colors.RESET}")
         logger.info("CLI channel stopped")
+
+    async def _stdin_loop(self) -> None:
+        """Background stdin reader that pushes user messages into incoming queue."""
+        while self._running:
+            try:
+                await self._input_gate.wait()
+                if not self._running:
+                    return
+
+                loop = asyncio.get_running_loop()
+                user_input = await loop.run_in_executor(
+                    None,
+                    lambda: input(f"{Colors.CYAN}You > {Colors.RESET}")
+                )
+            except (EOFError, KeyboardInterrupt):
+                await self._incoming_queue.put(None)
+                return
+            except asyncio.CancelledError:
+                return
+
+            user_input = user_input.strip()
+            if not user_input:
+                continue
+
+            if user_input.lower() in ("exit", "quit", "/quit", "/exit"):
+                await self._incoming_queue.put(None)
+                return
+
+            self._message_counter += 1
+            # Block next prompt until the current turn has output.
+            self._input_gate.clear()
+            await self._incoming_queue.put(
+                self._create_message(
+                    message_id=f"cli_msg_{self._message_counter}",
+                    sender_id=self.user_id,
+                    sender_name=self.user_name,
+                    content=user_input,
+                )
+            )
+
+    async def inject_message(self, message: Message) -> None:
+        """Inject an external message (e.g., cron wake event) into CLI input stream."""
+        await self._incoming_queue.put(message)
     
     async def receive_message(self) -> Optional[Message]:
-        """Read user input from stdin (async-compatible).
-        
-        Uses run_in_executor to avoid blocking the event loop.
-        Returns None on EOF or 'exit'/'quit' commands.
-        """
+        """Receive next queued message from stdin reader or injected events."""
         if not self._running:
             return None
-        
-        try:
-            # Async-compatible stdin read
-            loop = asyncio.get_event_loop()
-            user_input = await loop.run_in_executor(
-                None, 
-                lambda: input(f"{Colors.CYAN}You > {Colors.RESET}")
-            )
-        except (EOFError, KeyboardInterrupt):
-            return None
-        
-        # Handle exit commands
-        user_input = user_input.strip()
-        if not user_input:
-            return await self.receive_message()  # Skip empty inputs
-        
-        if user_input.lower() in ("exit", "quit", "/quit", "/exit"):
-            return None
-        
-        # Create Message
-        self._message_counter += 1
-        return self._create_message(
-            message_id=f"cli_msg_{self._message_counter}",
-            sender_id=self.user_id,
-            sender_name=self.user_name,
-            content=user_input,
-        )
+        # Allow one prompt whenever runtime asks for the next user message.
+        if not self._input_gate.is_set():
+            self._input_gate.set()
+        return await self._incoming_queue.get()
     
     async def send_response(self, response: dict[str, Any]) -> None:
         """Display response in terminal with formatting.
@@ -126,9 +156,17 @@ class CLIChannel(BaseChannel):
                     status = tr.get("status", "unknown") if isinstance(tr, dict) else str(tr)
                     icon = "[OK]" if status == "success" else ("[TASK]" if status == "task_created" else "[ERR]")
                     print(f"  {Colors.DIM}{icon} Result: {status}{Colors.RESET}")
+
+                    if isinstance(tr, dict):
+                        metadata = tr.get("metadata") or {}
+                        auth_mode = metadata.get("auth_mode")
+                        if auth_mode == "consensus":
+                            decision = metadata.get("guardian_decision") or "approve"
+                            print(f"  {Colors.DIM}[GUARDIAN] {decision}{Colors.RESET}")
             
             # Show main response
             print(f"{Colors.GREEN}Agent > {Colors.RESET}{text}\n")
+            self._input_gate.set()
         
         elif resp_type == "auth_request":
             await self._handle_auth_request(response)
@@ -149,25 +187,42 @@ class CLIChannel(BaseChannel):
                     result_str = result_str[:200] + "..."
                 print(f"  Result: {result_str}")
             print()
+            self._input_gate.set()
+
+        elif resp_type == "tool_progress":
+            tool_name = response.get("tool_name", "unknown")
+            status = response.get("status", "unknown")
+            target_file = response.get("target_file")
+            print(f"  {Colors.DIM}[TOOL] tool={tool_name} status={status}{Colors.RESET}")
+            if target_file:
+                print(f"  {Colors.DIM}          file={target_file}{Colors.RESET}")
         
         elif resp_type == "error":
             error = response.get("error", "Unknown error")
             print(f"{Colors.RED}Error: {error}{Colors.RESET}\n")
+            self._input_gate.set()
         
         else:
             print(f"{Colors.GRAY}[{resp_type}] {response}{Colors.RESET}\n")
+            self._input_gate.set()
     
     async def send_auth_request(self,
                                 auth_request_id: str,
                                 tool_name: str,
                                 description: str,
-                                diff_preview: Optional[str] = None) -> None:
+                                diff_preview: Optional[str] = None,
+                                reason: Optional[str] = None,
+                                auth_mode: Optional[str] = None) -> None:
         """Display HITL confirmation in terminal."""
         print(f"\n{Colors.YELLOW}{'=' * 60}{Colors.RESET}")
         print(f"{Colors.YELLOW}{Colors.BOLD}Sensitive Operation - Authorization Required{Colors.RESET}")
         print(f"{Colors.YELLOW}{'=' * 60}{Colors.RESET}")
         print(f"  Tool: {Colors.BOLD}{tool_name}{Colors.RESET}")
         print(f"  Description: {description}")
+        if auth_mode:
+            print(f"  Auth Mode: {auth_mode}")
+        if reason:
+            print(f"  Reason: {reason}")
         
         if diff_preview:
             print(f"\n{Colors.CYAN}  Diff Preview:{Colors.RESET}")
@@ -224,12 +279,16 @@ class CLIChannel(BaseChannel):
         tool_name = response.get("tool_name", "unknown")
         description = response.get("description", "")
         diff_preview = response.get("diff_preview")
+        reason = response.get("reason")
+        auth_mode = response.get("auth_mode")
         
         await self.send_auth_request(
             auth_request_id=auth_request_id,
             tool_name=tool_name,
             description=description,
             diff_preview=diff_preview,
+            reason=reason,
+            auth_mode=auth_mode,
         )
     
     def _print_banner(self) -> None:

@@ -7,6 +7,30 @@ from pathlib import Path
 
 from closeclaw.types import ToolType, Tool, Session
 from closeclaw.middleware import SafetyGuard, PathSandbox, AuthPermissionMiddleware, MiddlewareChain
+from closeclaw.safety import GuardianDecision, SecurityMode
+
+
+class _StubGuardian:
+    def __init__(self, approved: bool):
+        self.approved = approved
+
+    async def review(self, payload):
+        _ = payload
+        if self.approved:
+            return GuardianDecision(approved=True, reason_code="APPROVED", comment="ok")
+        return GuardianDecision(approved=False, reason_code="REJECTED", comment="blocked by sentinel")
+
+
+class _CaptureGuardian:
+    def __init__(self, approved: bool = True):
+        self.approved = approved
+        self.last_payload = None
+
+    async def review(self, payload):
+        self.last_payload = payload
+        if self.approved:
+            return GuardianDecision(approved=True, reason_code="APPROVED", comment="ok")
+        return GuardianDecision(approved=False, reason_code="REJECTED", comment="blocked by sentinel")
 
 
 class TestSafetyGuard:
@@ -152,6 +176,50 @@ class TestPathSandbox:
         )
         
         assert result["status"] == "allow"
+
+    @pytest.mark.asyncio
+    async def test_rebase_relative_path_to_workspace_root(self, temp_workspace):
+        """Relative file paths should be resolved against workspace_root, not process cwd."""
+        sandbox = PathSandbox(temp_workspace)
+        tool = Tool(
+            name="write_file",
+            description="Write file",
+            need_auth=True,
+            type=ToolType.FILE
+        )
+
+        args = {"path": os.path.join("CloseClaw Memory", "memory", "note.md")}
+        result = await sandbox.process(
+            tool=tool,
+            arguments=args,
+            session=None
+        )
+
+        assert result["status"] == "allow"
+        assert os.path.isabs(args["path"])
+        rel = os.path.relpath(args["path"], os.path.abspath(temp_workspace))
+        assert not rel.startswith("..")
+
+    @pytest.mark.asyncio
+    async def test_allow_non_path_file_tool_without_mutating_args(self, temp_workspace):
+        """FILE tools that don't use path should not get synthetic path injected."""
+        sandbox = PathSandbox(temp_workspace)
+        tool = Tool(
+            name="spawn",
+            description="Spawn subagent",
+            need_auth=False,
+            type=ToolType.FILE,
+        )
+
+        args = {"task": "do work"}
+        result = await sandbox.process(
+            tool=tool,
+            arguments=args,
+            session=None,
+        )
+
+        assert result["status"] == "allow"
+        assert "path" not in args
     
     @pytest.mark.asyncio
     async def test_block_file_outside_workspace(self, temp_workspace):
@@ -284,6 +352,8 @@ class TestAuthPermissionMiddleware:
         
         assert result["status"] == "requires_auth"
         assert "auth_request" in result
+        assert result.get("reason")
+        assert result.get("auth_mode") == "supervised"
     
     @pytest.mark.asyncio
     async def test_auth_request_structure(self, sample_session):
@@ -307,6 +377,163 @@ class TestAuthPermissionMiddleware:
         assert "id" in auth_req
         assert auth_req["tool_name"] == "delete_file"
         assert auth_req["user_id"] == sample_session.user_id
+        assert "reason" in auth_req
+        assert auth_req.get("auth_mode") == "supervised"
+
+    @pytest.mark.asyncio
+    async def test_write_file_auth_request_contains_diff_preview(self, sample_session, temp_workspace):
+        perms = AuthPermissionMiddleware()
+        tool = Tool(
+            name="write_file",
+            description="Write file",
+            need_auth=True,
+            type=ToolType.FILE,
+        )
+
+        target_file = Path(temp_workspace) / "target.txt"
+        target_file.write_text("S", encoding="utf-8")
+
+        result = await perms.process(
+            tool=tool,
+            arguments={"path": str(target_file), "content": "D"},
+            session=sample_session,
+        )
+
+        assert result["status"] == "requires_auth"
+        assert isinstance(result.get("diff_preview"), str)
+        assert "File:" in result["diff_preview"]
+        assert "+ D" in result["diff_preview"]
+
+    @pytest.mark.asyncio
+    async def test_autonomous_mode_allows_sensitive_tool(self, sample_session):
+        perms = AuthPermissionMiddleware(security_mode="autonomous")
+        tool = Tool(
+            name="delete_file",
+            description="Delete file",
+            need_auth=True,
+            type=ToolType.FILE,
+        )
+
+        result = await perms.process(
+            tool=tool,
+            arguments={"path": "/data/critical.txt"},
+            session=sample_session,
+        )
+
+        assert result["status"] == "allow"
+        assert result.get("auth_mode") == "autonomous"
+        assert "reason" in result
+
+    @pytest.mark.asyncio
+    async def test_autonomous_mode_enum_input_keeps_mode(self, sample_session):
+        perms = AuthPermissionMiddleware(security_mode=SecurityMode.AUTONOMOUS)
+        tool = Tool(
+            name="delete_file",
+            description="Delete file",
+            need_auth=True,
+            type=ToolType.FILE,
+        )
+
+        result = await perms.process(
+            tool=tool,
+            arguments={"path": "/data/critical.txt"},
+            session=sample_session,
+        )
+
+        assert result["status"] == "allow"
+        assert result.get("auth_mode") == "autonomous"
+
+    @pytest.mark.asyncio
+    async def test_consensus_mode_fail_closed_without_guardian(self, sample_session):
+        perms = AuthPermissionMiddleware(security_mode="consensus")
+        tool = Tool(
+            name="delete_file",
+            description="Delete file",
+            need_auth=True,
+            type=ToolType.FILE,
+        )
+
+        result = await perms.process(
+            tool=tool,
+            arguments={"path": "/data/critical.txt"},
+            session=sample_session,
+        )
+
+        assert result["status"] == "block"
+        assert result.get("reason_code") == "GUARDIAN_NOT_CONFIGURED"
+
+    @pytest.mark.asyncio
+    async def test_consensus_mode_blocks_when_guardian_rejects(self, sample_session):
+        perms = AuthPermissionMiddleware(
+            security_mode="consensus",
+            consensus_guardian=_StubGuardian(approved=False),
+        )
+        tool = Tool(
+            name="delete_file",
+            description="Delete file",
+            need_auth=True,
+            type=ToolType.FILE,
+        )
+
+        result = await perms.process(
+            tool=tool,
+            arguments={"path": "/data/critical.txt"},
+            session=sample_session,
+        )
+
+        assert result["status"] == "block"
+        assert result.get("reason_code") == "REJECTED"
+
+    @pytest.mark.asyncio
+    async def test_consensus_mode_allows_when_guardian_approves(self, sample_session):
+        perms = AuthPermissionMiddleware(
+            security_mode="consensus",
+            consensus_guardian=_StubGuardian(approved=True),
+        )
+        tool = Tool(
+            name="delete_file",
+            description="Delete file",
+            need_auth=True,
+            type=ToolType.FILE,
+        )
+
+        result = await perms.process(
+            tool=tool,
+            arguments={"path": "/data/critical.txt"},
+            session=sample_session,
+        )
+
+        assert result["status"] == "allow"
+        assert result.get("auth_mode") == "consensus"
+        assert result.get("reason")
+
+    @pytest.mark.asyncio
+    async def test_consensus_guardian_receives_diff_preview(self, sample_session, temp_workspace):
+        guardian = _CaptureGuardian(approved=True)
+        perms = AuthPermissionMiddleware(
+            security_mode="consensus",
+            consensus_guardian=guardian,
+        )
+        tool = Tool(
+            name="write_file",
+            description="Write file",
+            need_auth=True,
+            type=ToolType.FILE,
+        )
+
+        target_file = Path(temp_workspace) / "target2.txt"
+        target_file.write_text("old", encoding="utf-8")
+
+        result = await perms.process(
+            tool=tool,
+            arguments={"path": str(target_file), "content": "new"},
+            session=sample_session,
+        )
+
+        assert result["status"] == "allow"
+        assert guardian.last_payload is not None
+        assert isinstance(guardian.last_payload.get("diff_preview"), str)
+        assert "File:" in guardian.last_payload["diff_preview"]
 
 
 class TestMiddlewareChain:

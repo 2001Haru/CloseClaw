@@ -4,20 +4,30 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from ..compatibility import NativeAdapter, ToolSpecV2
 from ..types import Tool
 
 
 class ToolSchemaService:
     """Formats registered tools into OpenAI-compatible function schema."""
 
-    def format_tools_for_llm(self, tools: Iterable[Tool]) -> list[dict[str, Any]]:
+    def format_tools_for_llm(self, tools: Iterable[Tool | ToolSpecV2]) -> list[dict[str, Any]]:
         """Convert tool metadata into OpenAI function-calling schema list."""
         tools_list: list[dict[str, Any]] = []
         for tool in tools:
+            if isinstance(tool, ToolSpecV2):
+                spec = tool
+                tool_name = spec.name
+                tool_description = spec.description
+                raw_params = spec.input_schema or {}
+            else:
+                spec = NativeAdapter.to_toolspec_v2(tool)
+                tool_name = tool.name
+                tool_description = tool.description
+                raw_params = tool.parameters or {}
+
             properties_schema: dict[str, Any] = {}
             required: list[str] = []
-
-            raw_params = tool.parameters or {}
 
             if (
                 isinstance(raw_params, dict)
@@ -56,8 +66,8 @@ class ToolSchemaService:
                 {
                     "type": "function",
                     "function": {
-                        "name": tool.name,
-                        "description": tool.description,
+                        "name": tool_name,
+                        "description": tool_description,
                         "parameters": {
                             "type": "object",
                             "properties": properties_schema,

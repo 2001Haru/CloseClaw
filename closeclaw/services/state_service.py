@@ -91,6 +91,7 @@ class StateService:
         path = os.path.join(root, state_file)
 
         try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             temp_path = f"{path}.tmp"
             with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(state_dict, f, ensure_ascii=False, indent=2)

@@ -89,6 +89,62 @@ class TestAgentCoreInitialization:
         
         assert len(agent.tools) >= 0
 
+    def test_set_task_manager_registers_existing_tool_handlers(self, sample_agent_config, mock_llm, temp_workspace):
+        """TaskManager should receive handlers for tools already registered on agent."""
+        from closeclaw.agents.task_manager import TaskManager
+
+        async def dummy_handler():
+            return "ok"
+
+        tool = Tool(
+            name="dummy_tool",
+            description="Dummy tool",
+            need_auth=False,
+            type=ToolType.FILE,
+            handler=dummy_handler,
+        )
+
+        agent = AgentCore(
+            agent_id="agent_001",
+            llm_provider=mock_llm,
+            config=sample_agent_config,
+            workspace_root=temp_workspace,
+        )
+        agent.register_tool(tool)
+
+        tm = TaskManager()
+        agent.set_task_manager(tm)
+
+        assert "dummy_tool" in tm.tool_handlers
+
+    @pytest.mark.asyncio
+    async def test_poll_background_tasks_normalizes_taskmanager_dict(self, sample_agent_config, mock_llm, temp_workspace):
+        from closeclaw.agents.task_manager import TaskManager
+        from closeclaw.types import BackgroundTask, TaskStatus
+
+        agent = AgentCore(
+            agent_id="agent_001",
+            llm_provider=mock_llm,
+            config=sample_agent_config,
+            workspace_root=temp_workspace,
+        )
+        tm = TaskManager()
+        agent.set_task_manager(tm)
+
+        task = BackgroundTask(task_id="#001", tool_name="pwd", tool_arguments={}, expires_after=60)
+        task.status = TaskStatus.FAILED
+        task.error = "Tool 'pwd' not registered"
+
+        async def _fake_poll():
+            return {"#001": task}
+
+        tm.poll_results = _fake_poll  # type: ignore[method-assign]
+
+        results = await agent.poll_background_tasks()
+        assert isinstance(results, list)
+        assert results[0]["task_id"] == "#001"
+        assert results[0]["status"] in {"failed", TaskStatus.FAILED.value}
+
 
 class TestAgentCoreStateManagement:
     """Test agent state management."""

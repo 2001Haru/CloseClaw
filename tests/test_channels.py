@@ -242,6 +242,35 @@ class TestCLIChannel:
         
         await channel.stop()
 
+    async def test_cli_prompt_waits_for_agent_response(self):
+        """CLI should not prompt the next input before sending current turn response."""
+        channel = CLIChannel()
+        calls = {"count": 0}
+
+        def _fake_input(_prompt: str = ""):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return "first"
+            return "second"
+
+        with patch("builtins.input", side_effect=_fake_input):
+            await channel.start()
+            msg = await channel.receive_message()
+            assert msg is not None
+            assert msg.content == "first"
+
+            # Give stdin loop a chance; it should still be blocked by input gate.
+            await asyncio.sleep(0.05)
+            assert calls["count"] == 1
+
+            await channel.send_response({"type": "response", "response": "ok"})
+
+            # Now prompt is allowed for the next turn.
+            await asyncio.sleep(0.05)
+            assert calls["count"] >= 2
+
+            await channel.stop()
+
 
 # ====== TelegramChannel ======
 
@@ -387,6 +416,43 @@ class TestChannelExports:
     def test_feishu_getter(self):
         from closeclaw.channels import get_feishu_channel
         assert callable(get_feishu_channel)
+
+    def test_discord_getter(self):
+        from closeclaw.channels import get_discord_channel
+        assert callable(get_discord_channel)
+
+    def test_whatsapp_getter(self):
+        from closeclaw.channels import get_whatsapp_channel
+        assert callable(get_whatsapp_channel)
+
+    def test_qq_getter(self):
+        from closeclaw.channels import get_qq_channel
+        assert callable(get_qq_channel)
+
+
+class TestNewChannelImports:
+    """Smoke tests for newly added channel modules."""
+
+    def test_discord_module_import(self):
+        from closeclaw.channels.discord import DiscordChannel, HAS_DISCORD
+        assert DiscordChannel is not None
+        assert isinstance(HAS_DISCORD, bool)
+
+    def test_whatsapp_module_import(self):
+        from closeclaw.channels.whatsapp import WhatsAppChannel, HAS_WHATSAPP_BRIDGE
+        assert WhatsAppChannel is not None
+        assert isinstance(HAS_WHATSAPP_BRIDGE, bool)
+
+    def test_qq_module_import(self):
+        from closeclaw.channels.qq import QQChannel, HAS_QQ
+        assert QQChannel is not None
+        assert isinstance(HAS_QQ, bool)
+
+
+def test_channel_type_enum_contains_phase_d_channels():
+    assert ChannelType.DISCORD.value == "discord"
+    assert ChannelType.WHATSAPP.value == "whatsapp"
+    assert ChannelType.QQ.value == "qq"
 
 
 

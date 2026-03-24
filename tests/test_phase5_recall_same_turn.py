@@ -33,7 +33,7 @@ class RecallThenSummarizeLLM:
 @pytest.mark.asyncio
 async def test_phase5_case001_same_turn_completion(temp_workspace):
     config = AgentConfig(model="openai/gpt-4", temperature=0.0)
-    config.metadata["phase5"] = {
+    config.metadata["orchestrator"] = {
         "max_steps": 6,
     }
 

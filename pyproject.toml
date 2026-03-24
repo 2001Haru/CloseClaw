@@ -42,6 +42,9 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.0",
 ]
+providers = [
+    "litellm>=1.52.0",
+]
 telegram = [
     "python-telegram-bot>=20.0",
 ]
@@ -58,6 +61,9 @@ Home = "https://github.com/closeclaw/closeclaw"
 Documentation = "https://closeclaw.readthedocs.io"
 Repository = "https://github.com/closeclaw/closeclaw.git"
 Issues = "https://github.com/closeclaw/closeclaw/issues"
+
+[project.scripts]
+closeclaw = "closeclaw.__main__:main"
 
 [tool.flit.module]
 name = "closeclaw"

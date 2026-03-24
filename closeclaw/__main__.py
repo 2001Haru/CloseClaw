@@ -9,11 +9,21 @@ import sys
 
 
 CLI_SUBCOMMANDS = {
+    "agent",
+    "gateway",
     "tasks",
+    "list",
     "task",
+    "show",
     "cancel",
+    "stop",
     "summary",
     "mcp-health",
+    "mcp",
+    "channel-health",
+    "channel",
+    "provider-health",
+    "provider",
     "heartbeat-trigger",
     "heartbeat-status",
     "cron-add",

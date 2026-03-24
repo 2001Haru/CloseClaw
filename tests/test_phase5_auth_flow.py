@@ -165,7 +165,7 @@ class SelectiveAuthMiddleware:
 @pytest.fixture
 def phase5_agent(temp_workspace):
     config = AgentConfig(model="openai/gpt-4", temperature=0.0)
-    config.metadata["phase5"] = {
+    config.metadata["orchestrator"] = {
         "max_steps": 8,
     }
 
@@ -214,7 +214,7 @@ def phase5_agent(temp_workspace):
 @pytest.fixture
 def phase5_agent_stepwise(temp_workspace):
     config = AgentConfig(model="openai/gpt-4", temperature=0.0)
-    config.metadata["phase5"] = {
+    config.metadata["orchestrator"] = {
         "max_steps": 8,
     }
 
@@ -263,7 +263,7 @@ def phase5_agent_stepwise(temp_workspace):
 @pytest.fixture
 def phase5_agent_context_aware(temp_workspace):
     config = AgentConfig(model="openai/gpt-4", temperature=0.0)
-    config.metadata["phase5"] = {
+    config.metadata["orchestrator"] = {
         "max_steps": 8,
     }
 
@@ -312,7 +312,7 @@ def phase5_agent_context_aware(temp_workspace):
 @pytest.fixture
 def phase5_agent_auth_context_synthesis(temp_workspace):
     config = AgentConfig(model="openai/gpt-4", temperature=0.0)
-    config.metadata["phase5"] = {
+    config.metadata["orchestrator"] = {
         "max_steps": 8,
     }
 

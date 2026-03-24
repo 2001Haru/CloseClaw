@@ -167,6 +167,8 @@ class TestAgentMainLoop:
         
         # Verify
         responses = [o for o in output_calls if o["type"] == "response"]
+        tool_progress = [o for o in output_calls if o.get("type") == "tool_progress"]
+        assert len(tool_progress) >= 1
         assert len(responses) >= 1
         assert len(responses[0].get("tool_results", [])) >= 1
         logger.info(f"Tool execution: {len(responses[0]['tool_results'])} tool results")
