@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Minimal validator for nanobot skill folders.
-"""
+"""Minimal validator for CloseClaw skill folders."""
 
 import re
 import sys

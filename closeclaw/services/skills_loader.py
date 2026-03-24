@@ -180,12 +180,12 @@ class SkillsLoader:
         return content
 
     def _parse_skill_metadata(self, raw: str) -> dict:
-        """Parse JSON metadata from frontmatter and read closeclaw/nanobot/openclaw scopes."""
+        """Parse JSON metadata from frontmatter and read closeclaw/openclaw scopes."""
         try:
             data = json.loads(raw)
             if not isinstance(data, dict):
                 return {}
-            return data.get("closeclaw", data.get("nanobot", data.get("openclaw", {})))
+            return data.get("closeclaw", data.get("openclaw", {}))
         except (json.JSONDecodeError, TypeError):
             return {}
 

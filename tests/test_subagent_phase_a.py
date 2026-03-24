@@ -50,7 +50,7 @@ class _ToolUsingProvider:
                 ToolCall(
                     tool_id="tc_1",
                     name="read_file",
-                    arguments={"path": "D:/HALcode/Nanobot_Report.md"},
+                    arguments={"path": "D:/HALcode/CloseClaw_Report.md"},
                 )
             ]
         return "summary ready", None
