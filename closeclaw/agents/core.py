@@ -1,17 +1,13 @@
-﻿"""Agent core implementation."""
+"""Agent core implementation."""
 
 import logging
 import os
 import json
-import re
 from typing import Any, Awaitable, Callable, Optional, Protocol
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 
-try:
-    from zoneinfo import ZoneInfo
-except Exception:  # pragma: no cover
-    ZoneInfo = None
+
 
 from ..types import (
     Agent, AgentConfig, Session, Tool, Message,
@@ -23,29 +19,22 @@ from ..safety import AuditLogger
 from ..context import ContextManager, MessageCompactor
 from ..memory import MemoryFlushCoordinator, MemoryFlushSession, MemoryManager
 from ..memory.workspace_layout import (
-    PROJECT_CONTEXT_FILES,
     DEFAULT_AUDIT_LOG_REL,
-    memory_root_dir,
     ensure_workspace_memory_layout,
     migrate_legacy_memory_artifacts,
 )
 from ..orchestrator import (
-    Action,
     AfterObserveHook,
     BeforePlanHook,
-    Decision,
-    Observation,
     OrchestratorEngine,
     PlanPolicy,
     ProgressPolicy,
     PostActSafetyGuard,
     PreActBudgetGuard,
     PreActContextGuard,
-    RunBudget,
     RunState,
-    TodoStore,
 )
-from ..services import AuthService, ContextService, PlanningService, RuntimeLoopService, SkillsLoader, StateService, ToolExecutionService, ToolSchemaService
+from ..services import AuthService, BackgroundTaskService, ContextService, OrchestratorService, PlanningService, PromptBuilder, RuntimeLoopService, SkillsLoader, StateService, ToolExecutionService, ToolSchemaService
 
 logger = logging.getLogger(__name__)
 
@@ -173,20 +162,30 @@ class AgentCore:
         self.memory_manager = MemoryManager(workspace_root=self.workspace_root)
 
         # Phase 5: Single-loop orchestrator (MVP)
-        self.orchestrator_engine = OrchestratorEngine()
-        self.plan_policy = PlanPolicy()
-        orchestrator_cfg = self.config.metadata.get("orchestrator", self.config.metadata.get("phase5", {}))
-        self.progress_policy = ProgressPolicy(no_progress_limit=int(orchestrator_cfg.get("no_progress_limit", 2)))
-        self.orchestrator_guards = [
-            PreActBudgetGuard(),
-            PreActContextGuard(pre_act_callback=self._phase5_pre_act_context_guard),
-            PostActSafetyGuard(),
-        ]
-        self.orchestrator_hooks = [
-            BeforePlanHook(),
-            AfterObserveHook(),
-        ]
         self._phase5_auth_paused_runs: dict[str, RunState] = {}
+        orchestrator_cfg = self.config.metadata.get("orchestrator", self.config.metadata.get("phase5", {}))
+        progress_policy = ProgressPolicy(no_progress_limit=int(orchestrator_cfg.get("no_progress_limit", 2)))
+        self.orchestrator_service = OrchestratorService(
+            config=self.config,
+            planning_service=PlanningService(llm_provider=self.llm_provider),
+            context_service=None,  # set after context_service created
+            runtime_loop_service=RuntimeLoopService(),
+            progress_policy=progress_policy,
+            plan_policy=PlanPolicy(),
+            orchestrator_engine=OrchestratorEngine(),
+            orchestrator_guards=[
+                PreActBudgetGuard(),
+                PreActContextGuard(
+                    pre_act_callback=lambda state, action: self.orchestrator_service.pre_act_context_guard(state, action, self)
+                ),
+                PostActSafetyGuard(),
+            ],
+            orchestrator_hooks=[
+                BeforePlanHook(),
+                AfterObserveHook(),
+            ],
+            memory_flush_coordinator=self.memory_flush_coordinator,
+        )
         self.tool_execution_service = ToolExecutionService(
             tools=self.tools,
             middleware_chain=self.middleware_chain,
@@ -201,6 +200,7 @@ class AgentCore:
         )
         self.tool_schema_service = ToolSchemaService()
         self.runtime_loop_service = RuntimeLoopService()
+        self.background_task_service = BackgroundTaskService()
         self.state_service = StateService(
             workspace_root_getter=lambda: self.workspace_root,
             state_file_getter=lambda: self.state_file,
@@ -216,10 +216,19 @@ class AgentCore:
             audit_logger=self.audit_logger,
             compact_memory_max_chars=self.COMPACT_MEMORY_MAX_CHARS,
         )
+        self.orchestrator_service.context_service = self.context_service
         self._runtime_message_output_fn: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None
         self.skills_loader = SkillsLoader(
             workspace=Path(self.workspace_root),
             builtin_skills_dir=Path(self.repo_root) / "closeclaw" / "skills",
+        )
+        self.prompt_builder = PromptBuilder(
+            config=self.config,
+            workspace_root=self.workspace_root,
+            repo_root=self.repo_root,
+            tools=self.tools,
+            skills_loader=self.skills_loader,
+            context_service=self.context_service,
         )
         
         # Register retrieve_memory tool
@@ -298,381 +307,13 @@ class AgentCore:
 
         return await self._process_message_v2_orchestrated(message)
 
-    def _phase5_max_steps(self) -> int:
-        """Resolve max orchestrator steps from config metadata."""
-        orchestrator = self.config.metadata.get("orchestrator", self.config.metadata.get("phase5", {}))
-        max_steps = orchestrator.get("max_steps", 6)
-        try:
-            return max(1, int(max_steps))
-        except (TypeError, ValueError):
-            return 6
-
     def _resolve_work_timezone(self) -> tuple[Any, str]:
-        """Resolve configured work timezone from metadata.
-
-        Supports: IANA names (e.g. Asia/Shanghai), UTC, UTC+08:00, UTC-5.
-        """
-        configured = str(
-            getattr(self.config, "work_time_timezone", None)
-            or self.config.metadata.get("work_time_timezone", "UTC")
-            or "UTC"
-        ).strip()
-        if not configured:
-            return timezone.utc, "UTC"
-
-        if configured.upper() == "UTC":
-            return timezone.utc, "UTC"
-
-        m = re.fullmatch(r"UTC([+-])(\d{1,2})(?::?(\d{2}))?", configured, flags=re.IGNORECASE)
-        if m:
-            sign = 1 if m.group(1) == "+" else -1
-            hours = int(m.group(2))
-            minutes = int(m.group(3) or "0")
-            if hours <= 23 and minutes <= 59:
-                offset = timedelta(hours=hours, minutes=minutes) * sign
-                return timezone(offset), configured.upper()
-
-        if ZoneInfo is not None:
-            try:
-                return ZoneInfo(configured), configured
-            except Exception:
-                logger.warning("Invalid work_time_timezone '%s', fallback to UTC", configured)
-
-        return timezone.utc, "UTC"
+        """Resolve configured work timezone from metadata."""
+        return self.prompt_builder.resolve_work_timezone()
 
     async def _process_message_v2_orchestrated(self, message: Message) -> dict[str, Any]:
-        """Phase 5 P1 orchestrator flow (PLAN -> ACT -> OBSERVE -> DECIDE).
-
-        MVP action space is intentionally constrained to:
-        - tool_call
-        - final_answer
-        - plan_update
-        """
-        self.message_history.append(message)
-
-        run_state = RunState(
-            run_id=f"run_{int(datetime.now(timezone.utc).timestamp() * 1000)}",
-            user_message=message,
-            budget=RunBudget(max_steps=self._phase5_max_steps()),
-            metadata={
-                "stagnation_count": 0,
-                "force_replan": False,
-                "stop_after_replan": False,
-                "todo_store": TodoStore(),
-            },
-        )
-
-        def _phase5_build_messages_for_planner(state: RunState) -> list[dict[str, Any]]:
-            # Start from persisted conversation and append transient in-run tool traces.
-            # Without this, iterative planning can lose awareness of already executed tools.
-            messages_for_llm = self._format_conversation_for_llm()
-
-            for tc, tr in zip(state.tool_calls, state.tool_results):
-                messages_for_llm.append({
-                    "role": "assistant",
-                    "content": "",
-                    "tool_calls": [{
-                        "id": tc.tool_id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments),
-                        },
-                    }],
-                })
-                messages_for_llm.append({
-                    "role": "tool",
-                    "tool_call_id": tc.tool_id,
-                    "content": self.context_service.serialize_tool_result(tr),
-                })
-
-            return messages_for_llm
-
-        async def planner(state: RunState) -> Action:
-            if state.pending_actions:
-                return Action(
-                    type="tool_call",
-                    payload={"tool_call": state.pending_actions.pop(0)},
-                    reason="pending_action_queue",
-                    confidence=1.0,
-                )
-
-            planned = self.plan_policy.next_action_after_observation(state)
-            if planned is not None:
-                return planned
-
-            messages_for_llm = _phase5_build_messages_for_planner(state)
-            tools_for_llm = self._format_tools_for_llm()
-            llm_response, tool_calls = await self.planning_service.generate_plan_or_answer(
-                messages=messages_for_llm,
-                tools=tools_for_llm,
-                temperature=self.config.temperature,
-            )
-
-            if tool_calls:
-                if len(tool_calls) > 1:
-                    state.pending_actions.extend(tool_calls[1:])
-                    logger.info(f"Phase5 P1.5 queued {len(tool_calls) - 1} additional tool action(s)")
-                state.metadata["initial_llm_response"] = llm_response or ""
-                return Action(
-                    type="tool_call",
-                    payload={"tool_call": tool_calls[0]},
-                    reason="llm_requested_tool",
-                    confidence=1.0,
-                )
-
-            return Action(
-                type="final_answer",
-                payload={"text": llm_response or "I couldn't produce a useful answer."},
-                reason="llm_direct_answer",
-                confidence=1.0,
-            )
-
-        def _build_structured_plan_update_payload(state: RunState, reason: str) -> dict[str, Any]:
-            todo_store = state.metadata.get("todo_store")
-            if isinstance(todo_store, TodoStore):
-                todo_store.upsert(
-                    item_id="replan_root",
-                    title="Recover progress after repeated non-success tool results",
-                    status="blocked",
-                    source_step=state.step_id,
-                )
-                todo_snapshot = todo_store.export_snapshot()
-            else:
-                todo_snapshot = []
-
-            return {
-                "goal": "Recover progress and prevent repeated no-op tool loops",
-                "current_step": f"replan_required:{reason}",
-                "remaining_steps": [
-                    "inspect_latest_tool_errors",
-                    "choose_alternative_action_or_parameters",
-                    "execute_single_high-confidence_step",
-                ],
-                "done_criteria": [
-                    "at least one successful tool_result",
-                    "stagnation_count reset to 0",
-                ],
-                "risk": [
-                    "tool unavailable or blocked repeatedly",
-                    "context pressure causing low-quality plans",
-                ],
-                "todo_snapshot": todo_snapshot,
-            }
-
-        async def actor(state: RunState, action: Action) -> Observation:
-            if action.type == "tool_call":
-                tool_call: ToolCall = action.payload["tool_call"]
-                tool_result = await self._process_tool_call(tool_call)
-                await self._emit_tool_progress_event(
-                    step_id=state.step_id,
-                    tool_call=tool_call,
-                    tool_result=tool_result,
-                )
-                return Observation(
-                    kind="tool_result",
-                    status=tool_result.status,
-                    data={"tool_call": tool_call, "tool_result": tool_result},
-                    error=tool_result.error,
-                )
-
-            if action.type == "final_answer":
-                text = action.payload.get("text")
-                if action.payload.get("mode") == "synthesize_from_observations":
-                    text = await self._phase5_synthesize_answer(state)
-                return Observation(
-                    kind="final_answer",
-                    status="success",
-                    data={"text": text or self._phase5_fallback_summary(state)},
-                )
-
-            return Observation(
-                kind="plan_update",
-                status="success",
-                data={
-                    "text": action.payload.get("text") or json.dumps(action.payload, ensure_ascii=False),
-                    "payload": action.payload,
-                },
-            )
-
-        def observer(state: RunState, action: Action, observation: Observation) -> RunState:
-            if observation.kind == "tool_result":
-                state.tool_calls.append(observation.data["tool_call"])
-                state.tool_results.append(observation.data["tool_result"])
-            return state
-
-        def decider(state: RunState, action: Action, observation: Observation) -> Decision:
-            if observation.kind == "tool_result":
-                tool_result: ToolResult = observation.data["tool_result"]
-                if tool_result.status == "auth_required":
-                    self.state = AgentState.WAITING_FOR_AUTH
-                    pending_auth = tool_result.metadata
-                    auth_request_id = pending_auth.get("auth_request_id") if pending_auth else None
-                    if auth_request_id:
-                        self._phase5_auth_paused_runs[auth_request_id] = state
-
-                    assistant_message = state.metadata.get("initial_llm_response") or self._phase5_fallback_summary(state)
-                    return Decision(
-                        stop=True,
-                        reason="auth_required",
-                        output={
-                            "assistant_message": assistant_message,
-                            "response": assistant_message,
-                            "tool_calls": [tc.to_dict() for tc in state.tool_calls],
-                            "tool_results": [tr.to_dict() for tr in state.tool_results],
-                            "requires_auth": True,
-                            "auth_request_id": auth_request_id,
-                            "pending_auth": pending_auth,
-                            "memory_flushed": False,
-                        },
-                    )
-
-                if tool_result.status == "success":
-                    state.metadata["stagnation_count"] = 0
-                elif tool_result.status in {"error", "blocked", "task_created"}:
-                    state.metadata["stagnation_count"] = int(state.metadata.get("stagnation_count", 0)) + 1
-                    if self.progress_policy.should_stop(state):
-                        state.metadata["replan_payload"] = _build_structured_plan_update_payload(
-                            state,
-                            reason="no_progress_limit_reached",
-                        )
-                        state.metadata["force_replan"] = True
-                        state.metadata["stop_after_replan"] = True
-                        return Decision(stop=False, reason="force_replan")
-
-                if state.pending_actions:
-                    return Decision(stop=False, reason="continue_pending_actions")
-
-                if tool_result.status in {"error", "blocked", "task_created"}:
-                    return Decision(stop=False, reason="tool_finished_with_non_success")
-
-                return Decision(stop=False, reason="tool_success_continue")
-
-            if observation.kind in {"final_answer", "plan_update"}:
-                if observation.kind == "plan_update" and state.metadata.get("stop_after_replan", False):
-                    state.metadata["stop_after_replan"] = False
-                    return Decision(
-                        stop=True,
-                        reason="no_progress_limit_reached",
-                        output={
-                            "response": "I stopped this run after generating a recovery plan because no meaningful progress was made.",
-                            "plan_update": observation.data.get("payload", {}),
-                            "tool_calls": [tc.to_dict() for tc in state.tool_calls],
-                            "tool_results": [tr.to_dict() for tr in state.tool_results],
-                            "requires_auth": False,
-                            "memory_flushed": False,
-                            "decision": "no_progress_limit_reached",
-                        },
-                    )
-
-                response_text = observation.data.get("text") or self._phase5_fallback_summary(state)
-                return Decision(
-                    stop=True,
-                    reason="completed",
-                    output={
-                        "response": response_text,
-                        "tool_calls": [tc.to_dict() for tc in state.tool_calls],
-                        "tool_results": [tr.to_dict() for tr in state.tool_results],
-                        "requires_auth": False,
-                        "memory_flushed": False,
-                    },
-                )
-
-            return Decision(stop=False, reason="continue")
-
-        output = await self.orchestrator_engine.run(
-            run_state,
-            planner,
-            actor,
-            observer,
-            decider,
-            guards=self.orchestrator_guards,
-            hooks=self.orchestrator_hooks,
-        )
-
-        if self._critical_trim_notice_pending:
-            warning_text = (
-                "[CONTEXT WARNING] Context reached CRITICAL. "
-                "History was hard-trimmed to the latest 10 rounds to recover stability."
-            )
-            current_response = output.get("response") or ""
-            output["response"] = f"{warning_text}\n\n{current_response}" if current_response else warning_text
-            self._critical_trim_notice_pending = False
-
-        self.message_history.append(Message(
-            id=f"msg_{datetime.now(timezone.utc).timestamp()}",
-            channel_type=self.current_session.channel_type if self.current_session else "unknown",
-            sender_id=self.agent_id,
-            sender_name="Agent",
-            content=output.get("response", "No response generated."),
-            tool_calls=run_state.tool_calls or None,
-            tool_results=run_state.tool_results or None,
-        ))
-
-        return output
-
-    async def _emit_tool_progress_event(
-        self,
-        *,
-        step_id: int,
-        tool_call: ToolCall,
-        tool_result: ToolResult,
-    ) -> None:
-        """Emit per-tool progress to active channel without writing to conversation history."""
-        if not self._runtime_message_output_fn:
-            return
-
-        target_file = self._extract_progress_target_file(tool_call, tool_result)
-        status = "success" if tool_result.status in {"success", "task_created"} else "fail"
-
-        try:
-            await self.runtime_loop_service.emit_tool_progress(
-                self._runtime_message_output_fn,
-                step_id=step_id,
-                tool_name=tool_call.name,
-                status=status,
-                target_file=target_file,
-            )
-        except Exception as exc:
-            logger.exception("Failed to emit tool progress event: %s", exc)
-
-    def _extract_progress_target_file(self, tool_call: ToolCall, tool_result: ToolResult) -> str | None:
-        """Best-effort extraction of a file path target for progress visibility."""
-        path_keys = ("filePath", "path", "file", "filename", "target", "uri")
-
-        def _pick_path(value: Any) -> str | None:
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-            return None
-
-        args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-        for key in path_keys:
-            candidate = _pick_path(args.get(key))
-            if candidate:
-                return candidate
-
-        result = tool_result.result if isinstance(tool_result.result, dict) else {}
-        for key in path_keys:
-            candidate = _pick_path(result.get(key))
-            if candidate:
-                return candidate
-
-        return None
-
-    async def _phase5_pre_act_context_guard(self, state: RunState, action: Action) -> Optional[Any]:
-        """P2-B: run-scoped context pressure hook invoked by PreActContextGuard."""
-        if state.metadata.get("context_guard_checked", False):
-            return None
-
-        state.metadata["context_guard_checked"] = True
-        prior_session_id = self.memory_flush_coordinator.last_flush_session_id
-        await self._maybe_trigger_memory_flush_before_planning()
-
-        new_session_id = self.memory_flush_coordinator.last_flush_session_id
-        if new_session_id and new_session_id != prior_session_id:
-            state.metadata["flush_triggered_in_run"] = True
-
-        return None
+        """Phase 5 P1 orchestrator flow — delegated to OrchestratorService."""
+        return await self.orchestrator_service.run_turn(message, self)
 
     async def _maybe_trigger_memory_flush_before_planning(self) -> None:
         """Execute memory flush when context reaches WARNING threshold."""
@@ -708,127 +349,11 @@ class AgentCore:
         finally:
             self._memory_flush_in_progress = False
 
-    async def _phase5_synthesize_answer(self, state: RunState) -> str:
-        """Generate same-turn final answer from observed tool results.
-
-        Uses full conversation context plus current-run tool traces to avoid
-        short-prompt regressions in tool/auth-heavy turns.
-        """
-        synthesis_messages = self._format_conversation_for_llm()
-
-        for tc, tr in zip(state.tool_calls, state.tool_results):
-            content = self.context_service.serialize_tool_result(tr)
-
-            synthesis_messages.append({
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [{
-                    "id": tc.tool_id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": json.dumps(tc.arguments),
-                    },
-                }],
-            })
-            synthesis_messages.append({
-                "role": "tool",
-                "tool_call_id": tc.tool_id,
-                "content": content,
-            })
-
-        synthesis_messages.append({
-            "role": "user",
-            "content": (
-                "[Phase5] Based on the conversation and tool results above, provide the final user-facing answer now. "
-                "Do not call any additional tools."
-            ),
-        })
-
-        try:
-            response_text = await self.planning_service.synthesize_answer(
-                messages=synthesis_messages,
-                temperature=self.config.temperature,
-            )
-            if response_text and response_text.strip():
-                return response_text.strip()
-        except Exception as exc:
-            logger.error(f"Phase5 synthesis failed: {exc}")
-
-        return self._phase5_fallback_summary(state)
-
-    def _phase5_fallback_summary(self, state: RunState) -> str:
-        """Fallback summary to avoid placeholder-only responses."""
-        if not state.tool_results:
-            return "I could not produce a reliable answer in this turn."
-
-        successful = [tr for tr in state.tool_results if tr.status == "success"]
-        if successful:
-            top = successful[-1].result
-            if isinstance(top, str) and top.strip():
-                return top
-            return json.dumps(top)
-
-        top = state.tool_results[-1]
-        return top.error or f"Tool execution finished with status: {top.status}"
-
     async def _phase5_resume_after_auth(self,
                                         auth_request_id: str,
                                         auth_result: dict[str, Any]) -> Optional[dict[str, Any]]:
-        """Resume a paused Phase5 run after an auth decision and auto-finalize output."""
-        state = self._phase5_auth_paused_runs.pop(auth_request_id, None)
-        if not state:
-            return None
-
-        if auth_result.get("status") != "approved":
-            return {
-                "response": "Authorization was rejected, so the pending action was not executed.",
-                "tool_calls": [tc.to_dict() for tc in state.tool_calls],
-                "tool_results": [tr.to_dict() for tr in state.tool_results],
-                "requires_auth": False,
-                "memory_flushed": False,
-            }
-
-        # Replace the auth_required placeholder result with a concrete success result.
-        for tr in reversed(state.tool_results):
-            if tr.status == "auth_required":
-                tr.status = "success"
-                tr.result = auth_result.get("result")
-                tr.error = None
-                break
-
-        # Continue queued actions until complete or until another auth gate appears.
-        while state.pending_actions:
-            tool_call = state.pending_actions.pop(0)
-            tool_result = await self._process_tool_call(tool_call)
-            state.tool_calls.append(tool_call)
-            state.tool_results.append(tool_result)
-
-            if tool_result.status == "auth_required":
-                pending_auth = tool_result.metadata
-                next_auth_id = pending_auth.get("auth_request_id") if pending_auth else None
-                if next_auth_id:
-                    self._phase5_auth_paused_runs[next_auth_id] = state
-                self.state = AgentState.WAITING_FOR_AUTH
-                return {
-                    "assistant_message": "Previous action was approved. Another protected action needs authorization.",
-                    "response": "Previous action was approved. Another protected action needs authorization.",
-                    "tool_calls": [tc.to_dict() for tc in state.tool_calls],
-                    "tool_results": [tr.to_dict() for tr in state.tool_results],
-                    "requires_auth": True,
-                    "auth_request_id": next_auth_id,
-                    "pending_auth": pending_auth,
-                    "memory_flushed": False,
-                }
-
-        final_text = await self._phase5_synthesize_answer(state)
-        return {
-            "response": final_text,
-            "tool_calls": [tc.to_dict() for tc in state.tool_calls],
-            "tool_results": [tr.to_dict() for tr in state.tool_results],
-            "requires_auth": False,
-            "memory_flushed": False,
-        }
+        """Resume a paused Phase5 run after an auth decision."""
+        return await self.orchestrator_service.resume_after_auth(auth_request_id, auth_result, self)
     
     async def _process_tool_call(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call via unified ToolExecutionService entrypoint."""
@@ -1025,96 +550,7 @@ class AgentCore:
 
     def _build_system_prompt(self, suffix: str = "") -> str:
         """Build multi-layer system prompt with project context and work information."""
-        context_block = self._build_project_context_block()
-        work_info_block = self._build_work_information_block()
-        native_tools_block = self._build_native_tools_block()
-        always_skills_block = self._build_always_skills_block()
-        skills_summary_block = self._build_skills_summary_block()
-
-        base_prompt = self.config.system_prompt or ""
-        extras: list[str] = [
-            native_tools_block,
-            context_block,
-            work_info_block,
-            always_skills_block,
-            skills_summary_block,
-        ]
-        combined_base_prompt = "\n\n".join([p for p in [base_prompt, *extras] if p])
-
-        return self.context_service.build_system_prompt(
-            base_prompt=combined_base_prompt,
-            has_retrieve_memory_tool="retrieve_memory" in self.tools,
-            suffix=suffix,
-        )
-
-    def _build_always_skills_block(self) -> str:
-        always_skills = self.skills_loader.get_always_skills()
-        if not always_skills:
-            return ""
-
-        content = self.skills_loader.load_skills_for_context(always_skills)
-        if not content:
-            return ""
-
-        return "[ALWAYS SKILLS]\n" + content
-
-    def _build_skills_summary_block(self) -> str:
-        summary = self.skills_loader.build_skills_summary().strip()
-        if not summary:
-            return ""
-
-        return (
-            "[SKILLS INDEX]\n"
-            "Use read_file to load a full SKILL.md when the task requires specialized workflow.\n"
-            f"{summary}"
-        )
-
-    def _build_project_context_block(self) -> str:
-        root = memory_root_dir(self.workspace_root)
-        sections: list[str] = []
-        for name in PROJECT_CONTEXT_FILES:
-            path = os.path.join(root, name)
-            if not os.path.exists(path):
-                continue
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    content = f.read().strip()
-            except Exception:
-                continue
-            if not content:
-                continue
-            sections.append(f"[{name}]\n{content}")
-
-        if not sections:
-            return ""
-        return "[PROJECT CONTEXT]\n" + "\n\n".join(sections)
-
-    def _build_work_information_block(self) -> str:
-        now_utc = datetime.now(timezone.utc)
-        work_tz, tz_label = self._resolve_work_timezone()
-        now_local = now_utc.astimezone(work_tz)
-        return (
-            "[WORK INFORMATION]\n"
-            f"current_time_utc: {now_utc.isoformat()}\n"
-            f"configured_utc_timezone: {tz_label}\n"
-            f"current_time_configured: {now_local.isoformat()}\n"
-            f"workspace_root: {self.workspace_root}\n"
-            f"closeclaw_repository_root: {self.repo_root}"
-        )
-
-    def _build_native_tools_block(self) -> str:
-        if not self.tools:
-            return ""
-
-        rows: list[str] = []
-        for name in sorted(self.tools.keys()):
-            tool = self.tools[name]
-            desc = (tool.description or "").strip().replace("\n", " ")
-            if len(desc) > 120:
-                desc = desc[:120] + "..."
-            rows.append(f"- {name}: {desc}")
-
-        return "[NATIVE TOOLS]\nBuilt-in tools injected by system prompt:\n" + "\n".join(rows)
+        return self.prompt_builder.build(suffix)
 
     def _build_memory_recall_block(self) -> str:
         """Return recall policy guidance if memory retrieval is available."""
@@ -1156,111 +592,21 @@ class AgentCore:
             self.current_session = None
         self.state = AgentState.IDLE
     
-    # --- TaskManager Integration Interface (Phase 2) ---
-    # These methods are placeholders for TaskManager integration in Phase 2
-    
     def set_task_manager(self, task_manager: Any) -> None:
-        """Set the background task manager.
-        
-        Args:
-            task_manager: TaskManager instance for handling long-running operations
-        
-        Usage in Phase 2:
-            agent.set_task_manager(task_manager)
-        """
+        """Set the background task manager."""
         self.task_manager = task_manager
-
-        # Register all current tool handlers so background routing can execute them.
-        for tool in self.tools.values():
-            if getattr(tool, "handler", None):
-                self.task_manager.register_tool_handler(tool.name, tool.handler)
-
+        self.background_task_service.attach(task_manager, self.tools)
         logger.info("TaskManager integrated with AgentCore")
     
     async def poll_background_tasks(self) -> list[dict[str, Any]]:
-        """Poll for completed background tasks from TaskManager.
-        
-        Called from main loop to check if any background tasks have completed.
-        
-        Returns:
-            List of completed task results, each containing:
-            {
-                "task_id": str,
-                "status": "completed" | "failed" | "cancelled",
-                "result": Any,
-                "error": Optional[str]
-            }
-        
-        Usage in Phase 2:
-            completed = await agent.poll_background_tasks()
-            for task in completed:
-                notify_user(task["task_id"], task["result"])
-        """
-        if not hasattr(self, 'task_manager') or not self.task_manager:
-            return []
-        
-        # Delegate to TaskManager (to be implemented in Phase 2)
-        completed_tasks = await self.task_manager.poll_results()
-
-        # Normalize TaskManager outputs to list[dict] for stable runtime loop handling.
-        normalized: list[dict[str, Any]] = []
-
-        if isinstance(completed_tasks, dict):
-            for task_id, task in completed_tasks.items():
-                if isinstance(task, dict):
-                    normalized.append({
-                        "task_id": task.get("task_id", task_id),
-                        "status": task.get("status"),
-                        "result": task.get("result"),
-                        "error": task.get("error"),
-                    })
-                else:
-                    normalized.append({
-                        "task_id": getattr(task, "task_id", task_id),
-                        "status": getattr(getattr(task, "status", None), "value", getattr(task, "status", "unknown")),
-                        "result": getattr(task, "result", None),
-                        "error": getattr(task, "error", None),
-                    })
-            return normalized
-
-        if isinstance(completed_tasks, list):
-            for task in completed_tasks:
-                if isinstance(task, dict):
-                    normalized.append(task)
-                else:
-                    normalized.append({
-                        "task_id": str(task),
-                        "status": "unknown",
-                        "result": None,
-                        "error": "Unexpected task result payload type",
-                    })
-            return normalized
-
-        return normalized
+        """Poll for completed background tasks from TaskManager."""
+        return await self.background_task_service.poll()
     
     async def create_background_task(self, 
                                     tool_name: str, 
                                     arguments: dict[str, Any]) -> str:
-        """Create a background task for long-running tool execution.
-        
-        Args:
-            tool_name: Name of the tool to execute
-            arguments: Tool arguments
-        
-        Returns:
-            task_id: Unique task identifier (e.g., "#001")
-        
-        Usage in Phase 2:
-            task_id = await agent.create_background_task("web_search", {...})
-            response = f"Task {task_id} started in background"
-        """
-        if not hasattr(self, 'task_manager') or not self.task_manager:
-            raise RuntimeError("TaskManager not configured")
-        
-        # Delegate to TaskManager (to be implemented in Phase 2)
-        task_id = await self.task_manager.create_task(tool_name, arguments)
-        logger.info(f"Created background task: {task_id}")
-        return task_id
+        """Create a background task for long-running tool execution."""
+        return await self.background_task_service.create(tool_name, arguments)
     
     # --- Main Agent Loop (Phase 2) ---
     

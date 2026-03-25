@@ -1,4 +1,4 @@
-﻿"""Test for message history trimming during compression (bugfix for re-accumulation issue)."""
+"""Test for message history trimming during compression (bugfix for re-accumulation issue)."""
 
 import pytest
 import logging
@@ -21,7 +21,7 @@ class TestCompressionHistoryTrimming:
             temperature=0.0
         )
         context_settings = ContextManagementSettings(
-            max_tokens=3000,  # Small window to trigger easily
+            max_tokens=8000,  # Small enough to trigger, but large enough for the system prompt base tokens
             warning_threshold=0.75,
             critical_threshold=0.95,
             active_window=10,
@@ -47,20 +47,26 @@ class TestCompressionHistoryTrimming:
             workspace_root="/tmp",
             admin_user_id="test_user",
         )
+        
+        # Prevent real skills from inflating the system prompt token count
+        # which would instantly trigger the CRITICAL threshold in tests.
+        agent.skills_loader.get_always_skills = lambda: []
+        agent.skills_loader.build_skills_summary = lambda: ""
+        
         return agent
     
     def test_message_history_trimmed_after_compression(self, agent):
         """Verify that message_history is trimmed when compression is applied."""
         
         # Simulate adding many messages to reach compression threshold
-        # Each message is ~50 tokens on average
-        for i in range(60):  # 60 messages 脳 ~50 tokens = ~3000 tokens
+        # Each message needs to be large enough to trigger the 8000 max_tokens limit
+        for i in range(60):
             user_msg = Message(
                 id=f"msg_{i}",
                 channel_type="test",
                 sender_id="user_123",
                 sender_name="User",
-                content=f"This is a test message number {i} with some content to increase token count. " * 5,
+                content=f"This is a test message number {i} with some content to increase token count. " * 40,
                 metadata={}
             )
             agent.message_history.append(user_msg)
@@ -97,7 +103,7 @@ class TestCompressionHistoryTrimming:
                 channel_type="test",
                 sender_id="user_123",
                 sender_name="User",
-                content=f"Test message {i} with content. " * 10,  # Make messages bigger
+                content=f"Test message {i} with content. " * 30,  # Make messages bigger (8000 limit)
                 metadata={}
             )
             agent.message_history.append(user_msg)
@@ -123,7 +129,7 @@ class TestCompressionHistoryTrimming:
             channel_type="test",
             sender_id="user_123",
             sender_name="User",
-            content="New user message after compression with lots of content to test. " * 20,
+            content="New user message after compression with lots of content to test. " * 10,
             metadata={}
         )
         agent.message_history.append(new_msg)
@@ -153,7 +159,7 @@ class TestCompressionHistoryTrimming:
                 channel_type="test",
                 sender_id="user_123",
                 sender_name="User",
-                content=f"Message content {i}. " * 8,
+                content=f"Message content {i}. " * 30,
                 metadata={}
             )
             agent.message_history.append(user_msg)

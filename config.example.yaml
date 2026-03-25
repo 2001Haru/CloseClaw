@@ -48,7 +48,7 @@ mcp:  # Optional MCP server definitions used by mcp-health diagnostics.
 
 channels:  # Message channels; at least one channel should be enabled.
   - type: "telegram"  # Telegram bot channel.
-    enabled: false  # Enable Telegram polling/webhook channel.
+    enabled: true  # Enable Telegram polling/webhook channel.
     token: "TELEGRAM_BOT_TOKEN"  # Bot token from @BotFather.
 
   - type: "feishu"  # Feishu/Lark channel.

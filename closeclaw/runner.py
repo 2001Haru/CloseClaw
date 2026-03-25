@@ -4,9 +4,6 @@ Starts AgentCore with all enabled channels concurrently via asyncio.gather.
 Each channel gets its own AgentCore.run() loop, sharing the same AgentCore instance
 for state consistency.
 
-From Planning.md:
-  "鏈湴 CLI 瀹炵幇锛氬祵鍏ュ紡 CLI 椹卞姩锛屼笌 Server 鍏变韩鍚屼竴涓?AgentCore 瀹炰緥锛?   閫氳繃 asyncio.gather 鍚屾椂鍚姩 Server 鍜?CLI 寰幆銆?
-
 Usage:
     python -m closeclaw.runner --config config.yaml
 """
