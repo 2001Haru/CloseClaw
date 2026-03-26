@@ -1,4 +1,4 @@
-﻿"""Middleware system for permission checks and safety guards."""
+"""Middleware system for permission checks and safety guards."""
 
 import logging
 from abc import ABC, abstractmethod
@@ -115,39 +115,40 @@ class PathSandbox(Middleware):
             return {"status": "allow"}
         
         import os
+        from pathlib import Path
 
         # Not all FILE-type tools are path-based (e.g. spawn/task_status).
         # Only normalize/sandbox when the call explicitly carries a path field.
         if "path" not in arguments:
             return {"status": "allow"}
 
-        file_path = arguments.get("path", "")
+        file_path = str(arguments.get("path", ""))
 
-        # Normalize relative paths against workspace root instead of process cwd.
-        # This keeps file tool behavior deterministic no matter where the process is started.
-        if os.path.isabs(file_path):
-            abs_path = os.path.abspath(file_path)
-        else:
-            abs_path = os.path.abspath(os.path.join(self.workspace_root, file_path))
-
-        # Rewrite argument in-place so downstream tool handlers use the normalized path.
-        arguments["path"] = abs_path
-        
-        # Check if path is within workspace_root
+        # Use Path.resolve() to resolve symlinks and '..' robustly
         try:
-            rel_path = os.path.relpath(abs_path, self.workspace_root)
-            if rel_path.startswith(".."):
-                logger.warning(f"Path traversal attempt blocked: {abs_path}")
+            target_path = Path(file_path)
+            if not target_path.is_absolute():
+                target_path = Path(self.workspace_root) / target_path
+            
+            # resolve() will follow symlinks and compute the strict absolute path
+            abs_path = target_path.resolve()
+            workspace_path = Path(self.workspace_root).resolve()
+            
+            # Rewrite argument in-place so downstream tool handlers use the normalized path.
+            arguments["path"] = str(abs_path)
+            
+            # Check if path is within workspace_root
+            if not abs_path.is_relative_to(workspace_path):
+                logger.warning(f"Path traversal or symlink escape blocked: {abs_path}")
                 return {
                     "status": "block",
                     "reason": f"Path is outside workspace: {abs_path}",
                 }
-        except ValueError:
-            # Different drives on Windows
-            logger.warning(f"Cross-drive path attempt blocked: {abs_path}")
+        except Exception as exc:
+            logger.warning(f"Path resolution error blocked: {file_path} - {exc}")
             return {
                 "status": "block",
-                "reason": f"Path is on different drive or outside workspace: {abs_path}",
+                "reason": f"Invalid path format or resolution error: {file_path}",
             }
         
         return {"status": "allow"}

@@ -1,4 +1,4 @@
-﻿"""Shell command execution tools.
+"""Shell command execution tools.
 
 Uses asyncio.create_subprocess_shell for true non-blocking execution,
 enabling safe TaskManager integration.
@@ -8,11 +8,19 @@ import asyncio
 import logging
 from typing import Any, Optional
 import platform
+import os
 
 from .base import tool
 from ..types import ToolType
 
 logger = logging.getLogger(__name__)
+
+_shell_workspace_root: Optional[str] = None
+
+def configure_shell_sandbox(*, workspace_root: str) -> None:
+    """Configure runtime shell sandbox boundaries."""
+    global _shell_workspace_root
+    _shell_workspace_root = workspace_root
 
 
 @tool(
@@ -49,11 +57,23 @@ async def shell_impl(command: str, timeout: int = 30) -> dict[str, Any]:
     try:
         logger.info(f"Executing shell command (async): {command[:100]}")
         
+        # Prepare sandbox environment
+        cwd = _shell_workspace_root if _shell_workspace_root else None
+        
+        # Strip sensitive environment variables
+        safe_env = {}
+        for k, v in os.environ.items():
+            k_upper = k.upper()
+            if not (k_upper.endswith("_KEY") or k_upper.endswith("_TOKEN") or "PASSWORD" in k_upper or "SECRET" in k_upper):
+                safe_env[k] = v
+                
         # Create async subprocess
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            env=safe_env,
         )
         
         # Wait for completion with timeout
@@ -107,7 +127,7 @@ async def shell_impl(command: str, timeout: int = 30) -> dict[str, Any]:
 async def pwd_impl() -> str:
     """Get current working directory."""
     import os
-    cwd = os.getcwd()
+    cwd = _shell_workspace_root if _shell_workspace_root else os.getcwd()
     logger.info(f"Current directory: {cwd}")
     return cwd
 

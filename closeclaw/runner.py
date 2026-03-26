@@ -1,4 +1,4 @@
-﻿"""Multi-channel agent runner.
+"""Multi-channel agent runner.
 
 Starts AgentCore with all enabled channels concurrently via asyncio.gather.
 Each channel gets its own AgentCore.run() loop, sharing the same AgentCore instance
@@ -39,6 +39,7 @@ from .mcp import MCPBridge, MCPClientPool
 from .mcp.transport import MCPHttpClient, MCPStdioClient
 from .tools.base import get_registered_tools
 from .tools.web_tools import configure_web_search
+from .tools.shell_tools import configure_shell_sandbox
 from .types import AgentConfig, ContextManagementSettings, LLMSettings, Message
 
 logger = logging.getLogger(__name__)
@@ -304,6 +305,10 @@ def create_agent(config: CloseCrawlConfig,
         provider=config.web_search.provider,
         brave_api_key=config.web_search.brave_api_key,
         timeout_seconds=config.web_search.timeout_seconds,
+    )
+    
+    configure_shell_sandbox(
+        workspace_root=config.workspace_root
     )
     
     # Register all tools

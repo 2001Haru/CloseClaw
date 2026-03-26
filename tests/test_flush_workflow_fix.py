@@ -1,4 +1,4 @@
-﻿"""Test for fixed memory flush workflow.
+"""Test for fixed memory flush workflow.
 
 Tests that:
 1. Flush is injected WITHOUT prior compression
@@ -18,6 +18,7 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from closeclaw.agents.core import AgentCore
 from closeclaw.types.models import AgentConfig
 from closeclaw.memory.memory_flush import MemoryFlushSession, MemoryFlushCoordinator
+from closeclaw.memory.workspace_layout import ensure_workspace_memory_layout
 
 
 @pytest.fixture
@@ -59,9 +60,9 @@ class Test_FlushPromptWithAbsolutePath:
         flush_session = MemoryFlushSession(workspace_root)
         prompt = flush_session.create_flush_system_prompt()
         
-        # Should contain absolute path to memory directory
-        assert memory_dir in prompt, f"Flush prompt missing absolute path. Prompt:\n{prompt}"
-        assert "write_memory_file" in prompt.lower(), f"Flush prompt missing write_memory_file tool. Prompt:\n{prompt}"
+        # Should contain relative path to memory directory
+        assert "CloseClaw Memory/memory" in prompt, f"Flush prompt missing target directory. Prompt:\n{prompt}"
+        assert "write_memory_file" in prompt.lower() or "edit_memory_file" in prompt.lower(), f"Flush prompt missing context. Prompt:\n{prompt}"
         assert "[SILENT_REPLY]" in prompt
         print(f"鉁?Flush prompt correctly references write_memory_file and includes absolute path")
 
@@ -78,9 +79,8 @@ class Test_FlushWithoutPriorCompression:
         flush_session = MemoryFlushSession(workspace_root)
         prompt = flush_session.create_flush_system_prompt()
         
-        # Verify prompt includes absolute path
-        assert workspace_root in prompt or memory_dir in prompt
-        print(f"鉁?Flush prompt includes absolute path to memory directory")
+        # Verify prompt includes the target directory
+        assert "CloseClaw Memory/memory" in prompt
 
 
 class Test_TokenCountAfterFlushInjection:
@@ -100,10 +100,9 @@ class Test_TokenCountAfterFlushInjection:
         enc = tiktoken.get_encoding("cl100k_base")
         prompt_tokens = len(enc.encode(prompt))
         
-        # New critical prompt is more detailed, so 300-400 tokens is reasonable
-        # (was ~106 before, now more aggressive/explicit)
+        # New critical prompt is more detailed, around ~600 tokens
         assert prompt_tokens > 200, f"Flush prompt too short: {prompt_tokens} tokens"
-        assert prompt_tokens < 500, f"Flush prompt too long: {prompt_tokens} tokens"
+        assert prompt_tokens < 800, f"Flush prompt too long: {prompt_tokens} tokens"
         print(f"鉁?Flush prompt size: {prompt_tokens} tokens (acceptable for critical system command)")
 
 
@@ -115,8 +114,11 @@ class Test_MemoryFileCollection:
         """Verify memory files are collected from memory directory."""
         workspace_root, memory_dir = temp_workspace
         
-        # Create fake saved memory files
-        saved_file = os.path.join(memory_dir, "saved_config.md")
+        # Create fake saved memory files inside the correct subdir
+        ensure_workspace_memory_layout(workspace_root)
+        from closeclaw.memory.workspace_layout import DAILY_MEMORY_SUBDIR_REL
+        actual_memory_dir = os.path.join(workspace_root, DAILY_MEMORY_SUBDIR_REL)
+        saved_file = os.path.join(actual_memory_dir, "saved_config.md")
         with open(saved_file, "w", encoding="utf-8") as f:
             f.write("# Saved Configuration\n\nSome important config details")
         

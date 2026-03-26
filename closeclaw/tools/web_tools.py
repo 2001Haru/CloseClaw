@@ -1,4 +1,4 @@
-﻿"""Web tools - HTTP fetching and web search.
+"""Web tools - HTTP fetching and web search.
 
 Uses httpx.AsyncClient for non-blocking HTTP requests.
 """
@@ -7,11 +7,40 @@ import logging
 from typing import Any, Optional
 
 import httpx
+import socket
+import ipaddress
+import urllib.parse
 
 from .base import tool
 from ..types import ToolType
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_safe_url(url: str) -> None:
+    """Validate URL to prevent SSRF and local file access."""
+    parsed = urllib.parse.urlparse(url)
+    
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise PermissionError(f"Unsupported URL scheme: {parsed.scheme}. Only http/https are allowed.")
+        
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f"Invalid URL: {url}")
+        
+    try:
+        # Resolve hostname to IP to catch domain-based SSRF
+        addr_info = socket.getaddrinfo(hostname, None)
+        for _, _, _, _, sockaddr in addr_info:
+            ip_str = sockaddr[0]
+            ip = ipaddress.ip_address(ip_str)
+            if ip.is_private or ip.is_loopback or ip.is_link_local:
+                raise PermissionError(
+                    f"SSRF blocked: Host {hostname} resolves to restricted IP {ip_str}"
+                )
+    except socket.gaierror:
+        # If we can't resolve it, httpx will fail anyway, but we allow it through the sandbox check
+        pass
 
 
 _web_search_enabled = False
@@ -173,6 +202,8 @@ async def fetch_url_impl(url: str, max_length: int = 10000) -> dict[str, Any]:
     logger.info(f"Fetching URL: {url}")
     
     try:
+        _validate_safe_url(url)
+        
         async with httpx.AsyncClient(
             timeout=30.0,
             follow_redirects=True,
