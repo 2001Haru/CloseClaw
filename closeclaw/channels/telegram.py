@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 """Telegram channel - Integration with Telegram Bot API.
 
@@ -165,19 +165,35 @@ class TelegramChannel(BaseChannel):
         
         bot = self._app.bot
         
-        # Helper to split long messages to avoid Telegram 4096-char limit.
         def chunk_text(text: str, limit: int = TELEGRAM_SAFE_CHUNK_SIZE) -> list[str]:
             if len(text) <= limit:
                 return [text]
 
             chunks: list[str] = []
             remaining = text
+            is_in_code_block = False
+            
             while len(remaining) > limit:
                 split_at = remaining.rfind("\n", 0, limit)
                 if split_at <= 0:
                     split_at = limit
-                chunks.append(remaining[:split_at])
+                    
+                chunk = remaining[:split_at]
+                
+                # Count triple backticks to track code block state
+                code_block_count = chunk.count("```")
+                if code_block_count % 2 != 0:
+                    is_in_code_block = not is_in_code_block
+                    
+                if is_in_code_block:
+                    chunk += "\n```"
+                    
+                chunks.append(chunk)
+                
                 remaining = remaining[split_at:].lstrip("\n")
+                if is_in_code_block:
+                    remaining = "```\n" + remaining
+                    
             if remaining:
                 chunks.append(remaining)
             return chunks

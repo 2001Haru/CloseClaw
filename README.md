@@ -21,7 +21,7 @@
 
 ---
 
-## ✨ Why CloseClaw
+# ✨ Why CloseClaw
 
 - ### ⚡ **Fast to deploy**
 - Lightweight, Easy-to-Deploy, and equipped with a guarded orchestration loop to ensure strong performance. Powerful personal AI agents, ready in a minute.

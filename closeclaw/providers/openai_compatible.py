@@ -110,4 +110,74 @@ class OpenAICompatibleProvider:
         text = message.get("content", "") or ""
         tool_calls = parse_openai_like_tool_calls(message.get("tool_calls"))
 
+        # Fallback: Many 3rd-party proxies (e.g., OhMyGPT mapping Gemini API) fail to map 
+        # native tool responses back into the OpenAI `tool_calls` array, instead dumping 
+        # the raw JSON tool request into the text `content`. 
+        if not tool_calls and text:
+            import re
+            import json
+            import uuid
+            
+            extracted_calls = []
+            exact_matches_to_strip = []
+
+            # 1. Look for proxy-synthesized text: `Calling <name> function with parameters: <json>`
+            proxy_patterns = re.finditer(r"Calling\s+([a-zA-Z0-9_]+)\s+function\s+with\s+parameters:\s*(\{.*?\})", text, re.DOTALL)
+            for match in proxy_patterns:
+                func_name = match.group(1)
+                args_str = match.group(2)
+                try:
+                    args = json.loads(args_str)
+                    extracted_calls.append({"name": func_name, "arguments": args})
+                    exact_matches_to_strip.append(match.group(0))
+                except json.JSONDecodeError:
+                    pass
+            
+            # 2. Look for ```json ... ``` blocks
+            if not extracted_calls:
+                json_blocks = re.findall(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+                blocks_to_check = json_blocks if json_blocks else [text.strip()]
+                
+                for block in blocks_to_check:
+                    if not block:
+                        continue
+                    try:
+                        parsed = json.loads(block)
+                        
+                        # Handle single object {"name": "tool", "arguments": {...}}
+                        if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
+                            extracted_calls.append(parsed)
+                        # Handle array of objects [{"name": "tool", ...}]
+                        elif isinstance(parsed, list) and all(isinstance(x, dict) and "name" in x for x in parsed):
+                            extracted_calls.extend(parsed)
+                        # Handle wrapped format {"tool_calls": [...]}
+                        elif isinstance(parsed, dict) and "tool_calls" in parsed and isinstance(parsed["tool_calls"], list):
+                            extracted_calls.extend(parsed["tool_calls"])
+                    except json.JSONDecodeError:
+                        continue
+                        
+            if extracted_calls:
+                tool_calls = []
+                for call in extracted_calls:
+                    name = call.get("name")
+                    args = call.get("arguments", {})
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            args = {"raw": args}
+                            
+                    tool_calls.append(ToolCall(
+                        tool_id=call.get("id") or f"call_{uuid.uuid4().hex[:8]}",
+                        name=str(name),
+                        arguments=args,
+                    ))
+                # Clear the JSON/proxy block from text so it doesn't leak to the user
+                text = re.sub(r"Calling\s+[a-zA-Z0-9_]+\s+function\s+with\s+parameters:\s*\{.*?\}", "[Tool calling requested...]", text, flags=re.DOTALL)
+                text = re.sub(r"```(?:json)?\s*.*?\s*```", "[Tool calling requested...]", text, flags=re.DOTALL)
+                
+                # If the entire message was just a fallback string without other useful text, make it exactly "[Tool calling requested...]"
+                if not text.strip().replace("[Tool calling requested...]", "").strip():
+                    text = "[Tool calling requested...]"
+
         return (text, tool_calls)

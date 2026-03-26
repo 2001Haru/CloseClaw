@@ -40,14 +40,19 @@ def _sync_read_image(path: str) -> str:
     return f"___VISION_BASE64___:{data_url}"
 
 
-def _sync_read_pdf(path: str) -> str:
+def _sync_read_pdf(path: str, start_page: int = 1, max_pages: int = 20) -> str:
     """Synchronous PDF reading helper, executed via executor."""
     try:
         import pymupdf4llm
     except ImportError:
         return "Error: pymupdf4llm is not installed. Run 'pip install pymupdf4llm'."
 
-    md_text = pymupdf4llm.to_markdown(path)
+    pages = None
+    if start_page > 0:
+        # pymupdf4llm zero-indexed
+        pages = list(range(start_page - 1, start_page - 1 + max_pages))
+
+    md_text = pymupdf4llm.to_markdown(path, pages=pages)
 
     # Truncate extremely long PDFs to avoid context overflow
     max_chars = 30000
@@ -59,13 +64,13 @@ def _sync_read_pdf(path: str) -> str:
 
 @tool(
     name="read_pdf",
-    description="Extract text from a PDF file. Use this for reading PDF documents, papers, manuals, or slides. Returns the file's text formatted as Markdown.",
+    description="Extract text from a PDF file. Use this for reading PDF documents, papers, manuals, or slides. Returns the file's text formatted as Markdown. Use start_page and max_pages to paginate through large documents.",
     tool_type=ToolType.FILE,
     need_auth=False,
 )
-async def read_pdf_impl(path: str) -> str:
+async def read_pdf_impl(path: str, start_page: int = 1, max_pages: int = 20) -> str:
     try:
-        return await asyncio.to_thread(_sync_read_pdf, path)
+        return await asyncio.to_thread(_sync_read_pdf, path, start_page, max_pages)
     except Exception as e:
         return f"Error reading PDF: {e}"
 

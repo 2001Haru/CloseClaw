@@ -84,11 +84,19 @@ def migrate_legacy_memory_artifacts(workspace_root: str) -> None:
     target_state = mem_root / "state.json"
     if legacy_state.exists() and (not target_state.exists() or target_state.read_text(encoding="utf-8").strip() in {"", "{}"}):
         shutil.copy2(legacy_state, target_state)
+        try:
+            legacy_state.rename(legacy_state.with_suffix(".json.migrated"))
+        except OSError:
+            pass
 
     legacy_db = root / "memory" / "memory.sqlite"
     target_db = mem_root / "memory.sqlite"
     if legacy_db.exists() and not target_db.exists():
         shutil.copy2(legacy_db, target_db)
+        try:
+            legacy_db.rename(legacy_db.with_suffix(".sqlite.migrated"))
+        except OSError:
+            pass
 
     legacy_daily_dir = root / "memory"
     if legacy_daily_dir.exists() and legacy_daily_dir.is_dir():
@@ -96,6 +104,10 @@ def migrate_legacy_memory_artifacts(workspace_root: str) -> None:
             target = daily_dir / file.name
             if not target.exists():
                 shutil.copy2(file, target)
+                try:
+                    file.rename(file.with_suffix(".md.migrated"))
+                except OSError:
+                    pass
 
         # Legacy root-level `memory/` should not be used anymore. If it is empty,
         # remove it to avoid repeatedly surfacing a confusing empty folder.
