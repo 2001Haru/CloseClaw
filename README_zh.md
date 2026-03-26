@@ -1,4 +1,6 @@
-# 🦀 CloseClaw
+<p align="center">
+  <img src="assets/logo.png" alt="CloseClaw Logo" width="1200">
+</p>
 
 [EN](README.md) | [中文](README_zh.md)
 
