@@ -1,4 +1,4 @@
-﻿"""Message and communication types."""
+"""Message and communication types."""
 
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -70,6 +70,7 @@ class Message:
     content: str
     timestamp: datetime = field(default_factory=datetime.utcnow)
     metadata: dict[str, Any] = field(default_factory=dict)
+    images: Optional[list[str]] = None  # List of base64 image strings natively supporting vision
     
     # Optional fields for LLM function calling history
     tool_calls: Optional[list[ToolCall]] = None
@@ -89,6 +90,8 @@ class Message:
             data["tool_calls"] = [tc.to_dict() for tc in self.tool_calls]
         if self.tool_results is not None:
             data["tool_results"] = [tr.to_dict() for tr in self.tool_results]
+        if self.images is not None:
+            data["images"] = self.images
         return data
 
     @classmethod
@@ -112,6 +115,7 @@ class Message:
             content=data.get("content", ""),
             timestamp=timestamp,
             metadata=data.get("metadata", {}),
+            images=data.get("images"),
             tool_calls=tool_calls,
             tool_results=tool_results
         )

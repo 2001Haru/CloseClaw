@@ -111,19 +111,14 @@ class PromptBuilder:
         )
 
     def native_tools_block(self) -> str:
-        """Build [NATIVE TOOLS] block listing registered tools."""
-        if not self.tools:
-            return ""
-
-        rows: list[str] = []
-        for name in sorted(self.tools.keys()):
-            tool = self.tools[name]
-            desc = (tool.description or "").strip().replace("\n", " ")
-            if len(desc) > 120:
-                desc = desc[:120] + "..."
-            rows.append(f"- {name}: {desc}")
-
-        return "[NATIVE TOOLS]\nBuilt-in tools injected by system prompt:\n" + "\n".join(rows)
+        """Build [NATIVE TOOLS] block.
+        
+        NOTE: Returning empty string to avoid embedding plain-text tool descriptions
+        in the system prompt, which causes models like Gemini to 'speak' tool calls
+        as text rather than using the structured API. The schema is passed via
+        the native `tools` array automatically.
+        """
+        return ""
 
     def always_skills_block(self) -> str:
         """Build [ALWAYS SKILLS] block from skills loader."""

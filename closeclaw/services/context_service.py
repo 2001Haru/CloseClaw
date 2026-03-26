@@ -393,8 +393,22 @@ How to respond:
 
             msg_dict: dict[str, Any] = {
                 "role": role,
-                "content": msg.content,
             }
+
+            images = getattr(msg, "images", None)
+            if images:
+                content_list = []
+                if msg.content:
+                    content_list.append({"type": "text", "text": msg.content})
+                for image_data in images:
+                    url = image_data if image_data.startswith("data:image/") else f"data:image/jpeg;base64,{image_data}"
+                    content_list.append({
+                        "type": "image_url",
+                        "image_url": {"url": url}
+                    })
+                msg_dict["content"] = content_list
+            else:
+                msg_dict["content"] = msg.content
 
             if role == "assistant" and msg.tool_calls:
                 msg_dict["tool_calls"] = [
@@ -413,10 +427,37 @@ How to respond:
 
             if msg.tool_results:
                 for tr in msg.tool_results:
-                    content = self.serialize_tool_result(tr)
-                    if len(content) > max_result_chars:
-                        content = (
-                            content[:max_result_chars]
+                    content_str = self.serialize_tool_result(tr)
+                    
+                    # Vision base64 interception — must run BEFORE truncation
+                    if "___VISION_BASE64___:" in content_str:
+                        parts = content_str.split("___VISION_BASE64___:", 1)
+                        b64_part = parts[1].strip()
+                        
+                        # Return a short text result to the tool call slot
+                        target_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tr.tool_call_id,
+                            "content": "[Image loaded and injected into visual context]",
+                        })
+                        
+                        # Inject the actual Vision payload as a separate user message
+                        target_messages.append({
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "[System: Image from read_image tool]"},
+                                {"type": "image_url", "image_url": {"url": b64_part}}
+                            ]
+                        })
+                        
+                        # CRITICAL: Strip the base64 blob from the ToolResult so it is
+                        # never re-serialized into state.json or future context windows.
+                        tr.result = "[Image was loaded and shown to model via Vision API]"
+                        continue
+
+                    if len(content_str) > max_result_chars:
+                        content_str = (
+                            content_str[:max_result_chars]
                             + f"\n\n... [Output truncated because it exceeded {max_result_chars} characters]"
                         )
 
@@ -424,7 +465,7 @@ How to respond:
                         {
                             "role": "tool",
                             "tool_call_id": tr.tool_call_id,
-                            "content": content,
+                            "content": content_str,
                         }
                     )
 

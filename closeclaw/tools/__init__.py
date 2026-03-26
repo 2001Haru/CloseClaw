@@ -1,4 +1,4 @@
-﻿"""Tool system."""
+"""Tool system."""
 
 from .base import (
     tool, BaseTool, ToolRegistry, 
@@ -13,6 +13,7 @@ from .cron_tools import call_cron_impl
 from .shell_tools import shell_impl, pwd_impl
 from .spawn_tools import spawn_impl, task_status_impl, task_cancel_impl
 from .web_tools import web_search_impl, configure_web_search
+from .document_tools import read_pdf_impl, read_image_impl
 from .adaptation import ToolAdaptationLayer, ExecutionMode, ToolMetadata
 from ..types import Tool, ToolType
 
@@ -53,5 +54,8 @@ __all__ = [
     # Web tools
     "configure_web_search",
     "web_search_impl",
+    # Document tools
+    "read_pdf_impl",
+    "read_image_impl",
 ]
 

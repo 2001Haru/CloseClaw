@@ -1,4 +1,4 @@
-﻿"""Embedded CLI channel - Interactive terminal-based channel.
+"""Embedded CLI channel - Interactive terminal-based channel.
 
 Shares the same AgentCore instance with other channels.
 Provides stdin/stdout based message exchange and HITL confirmation.
@@ -104,17 +104,42 @@ class CLIChannel(BaseChannel):
                 await self._incoming_queue.put(None)
                 return
 
+            images = None
+            if user_input.startswith("/image "):
+                parts = user_input.split(" ", 1)
+                if len(parts) == 2:
+                    filepath = parts[1].strip()
+                    try:
+                        import base64
+                        from pathlib import Path
+                        img_path = Path(filepath).resolve()
+                        if img_path.exists() and img_path.is_file():
+                            with open(img_path, "rb") as f:
+                                images = [base64.b64encode(f.read()).decode('utf-8')]
+                            user_input = f"[Attached Image: {img_path.name}]"
+                            print(f"{Colors.GRAY} -> Loaded image: {img_path}{Colors.RESET}")
+                        else:
+                            print(f"{Colors.RED} -> Invalid image path: {img_path}{Colors.RESET}")
+                            self._input_gate.set()
+                            continue
+                    except Exception as e:
+                        print(f"{Colors.RED} -> Error loading image: {e}{Colors.RESET}")
+                        self._input_gate.set()
+                        continue
+
             self._message_counter += 1
             # Block next prompt until the current turn has output.
             self._input_gate.clear()
-            await self._incoming_queue.put(
-                self._create_message(
+            msg = self._create_message(
                     message_id=f"cli_msg_{self._message_counter}",
                     sender_id=self.user_id,
                     sender_name=self.user_name,
                     content=user_input,
                 )
-            )
+            if images:
+                msg.images = images
+                
+            await self._incoming_queue.put(msg)
 
     async def inject_message(self, message: Message) -> None:
         """Inject an external message (e.g., cron wake event) into CLI input stream."""
@@ -297,7 +322,9 @@ class CLIChannel(BaseChannel):
 {Colors.CYAN}{'=' * 60}
     CloseClaw - Interactive CLI Mode
   Type your message and press Enter.
-  Commands: /exit, /quit
+  Commands: 
+    /image <path> : Attach an image to your prompt
+    /exit, /quit  : Stop the agent
 {'=' * 60}{Colors.RESET}
 """)
 

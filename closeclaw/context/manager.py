@@ -1,4 +1,4 @@
-﻿"""Token counting and context monitoring for Phase 4."""
+"""Token counting and context monitoring for Phase 4."""
 
 import logging
 import json
@@ -84,7 +84,13 @@ class ContextManager:
         for msg in messages:
             if isinstance(msg, dict) and 'content' in msg:
                 content = msg.get('content', '')
-                if content:
+                if isinstance(content, list):
+                    for block in content:
+                        if block.get("type") == "text":
+                            total += self.count_tokens(str(block.get("text", "")))
+                        elif block.get("type") == "image_url":
+                            total += 300  # Rough approximation for visual tokens
+                elif content:
                     total += self.count_tokens(str(content))
         return total
     

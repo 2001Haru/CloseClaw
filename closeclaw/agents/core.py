@@ -807,6 +807,12 @@ class AgentCore:
                         message_output_fn,
                         error=f"Loop error: {str(loop_error)}",
                     )
+                    # Recovery save: Ensure partial turn progress or errors are saved
+                    try:
+                        await self._save_state()
+                        logger.debug("State persevered after exception.")
+                    except Exception as save_err:
+                        logger.error(f"Failed to save state during error recovery: {save_err}")
                     # Continue loop instead of breaking
         
         except Exception as e:
