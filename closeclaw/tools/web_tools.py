@@ -3,13 +3,25 @@
 Uses httpx.AsyncClient for non-blocking HTTP requests.
 """
 
+import asyncio
+import inspect
 import logging
+import time
 from typing import Any, Optional
 
 import httpx
 import socket
 import ipaddress
 import urllib.parse
+
+try:
+    from ddgs import DDGS
+except Exception:  # pragma: no cover - dependency availability is environment-specific
+    try:
+        # Backward compatibility for environments that still have old package name.
+        from duckduckgo_search import DDGS
+    except Exception:  # pragma: no cover - dependency availability is environment-specific
+        DDGS = None
 
 from .base import tool
 from ..types import ToolType
@@ -47,6 +59,9 @@ _web_search_enabled = False
 _web_search_provider = "brave"
 _brave_api_key: Optional[str] = None
 _web_search_timeout_seconds = 30
+_duckduckgo_min_interval_seconds = 2.0
+_duckduckgo_rate_lock = asyncio.Lock()
+_duckduckgo_last_request_started_at = 0.0
 
 
 def configure_web_search(
@@ -55,13 +70,123 @@ def configure_web_search(
     provider: str = "brave",
     brave_api_key: Optional[str] = None,
     timeout_seconds: int = 30,
+    duckduckgo_min_interval_seconds: float = 2.0,
 ) -> None:
     """Configure runtime web search provider settings."""
     global _web_search_enabled, _web_search_provider, _brave_api_key, _web_search_timeout_seconds
+    global _duckduckgo_min_interval_seconds
     _web_search_enabled = bool(enabled)
     _web_search_provider = (provider or "brave").strip().lower()
     _brave_api_key = (brave_api_key or "").strip() or None
     _web_search_timeout_seconds = max(1, int(timeout_seconds))
+    _duckduckgo_min_interval_seconds = max(0.0, float(duckduckgo_min_interval_seconds))
+
+
+def _normalize_search_results(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            {
+                "title": item.get("title") or "(no title)",
+                "url": item.get("url") or "",
+                "snippet": item.get("snippet") or "",
+            }
+        )
+    return normalized
+
+
+async def _search_with_brave(query: str, count: int) -> list[dict[str, Any]]:
+    if not _brave_api_key:
+        raise ValueError("Brave Search API key not configured")
+
+    async with httpx.AsyncClient(
+        timeout=float(_web_search_timeout_seconds),
+        follow_redirects=True,
+        headers={
+            "Accept": "application/json",
+            "X-Subscription-Token": _brave_api_key,
+            "User-Agent": "CloseClaw/0.1",
+        },
+    ) as client:
+        response = await client.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": query, "count": count},
+        )
+        response.raise_for_status()
+        payload = response.json() if response.content else {}
+
+    results = payload.get("web", {}).get("results", [])
+    mapped = [
+        {
+            "title": item.get("title") or "(no title)",
+            "url": item.get("url") or "",
+            "snippet": item.get("description") or "",
+        }
+        for item in results
+        if isinstance(item, dict)
+    ]
+    return _normalize_search_results(mapped)
+
+
+async def _enforce_duckduckgo_rate_limit() -> None:
+    """Throttle DDG requests to reduce chance of provider-side limiting."""
+    global _duckduckgo_last_request_started_at
+
+    async with _duckduckgo_rate_lock:
+        now = time.monotonic()
+        elapsed = now - _duckduckgo_last_request_started_at
+        wait_seconds = _duckduckgo_min_interval_seconds - elapsed
+        if wait_seconds > 0:
+            await asyncio.sleep(wait_seconds)
+        _duckduckgo_last_request_started_at = time.monotonic()
+
+
+def _duckduckgo_text_search_sync(query: str, count: int) -> list[dict[str, Any]]:
+    if DDGS is None:
+        raise RuntimeError("DDG package is not installed. Install 'ddgs'.")
+
+    with DDGS(timeout=_web_search_timeout_seconds) as ddgs:
+        text_params = set(inspect.signature(ddgs.text).parameters.keys())
+        attempts: list[dict[str, Any]] = [{}]
+
+        # Some DDG backends can intermittently fail (for example, upstream returns None).
+        # Try explicit backends when API supports a backend parameter.
+        if "backend" in text_params:
+            attempts.extend([{"backend": "html"}, {"backend": "lite"}])
+
+        last_exc: Optional[Exception] = None
+        raw_results = []
+        for kwargs in attempts:
+            call_kwargs: dict[str, Any] = {"max_results": count, **kwargs}
+            try:
+                raw_results = list(ddgs.text(query, **call_kwargs))
+                break
+            except Exception as exc:
+                last_exc = exc
+                continue
+
+        if not raw_results and last_exc is not None:
+            raise last_exc
+
+    mapped: list[dict[str, Any]] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        mapped.append(
+            {
+                "title": item.get("title") or "(no title)",
+                "url": item.get("href") or "",
+                "snippet": item.get("body") or "",
+            }
+        )
+    return _normalize_search_results(mapped)
+
+
+async def _search_with_duckduckgo(query: str, count: int) -> list[dict[str, Any]]:
+    await _enforce_duckduckgo_rate_limit()
+    return await asyncio.to_thread(_duckduckgo_text_search_sync, query, count)
 
 
 @tool(
@@ -81,7 +206,7 @@ def configure_web_search(
     }
 )
 async def web_search_impl(query: str, max_results: int = 5) -> list[dict[str, Any]]:
-    """Search the web using configured provider (Brave Search API)."""
+    """Search the web using configured provider with Brave->DDG fallback."""
     logger.info(f"Web search: {query} (max_results={max_results})")
 
     if not _web_search_enabled:
@@ -90,74 +215,50 @@ async def web_search_impl(query: str, max_results: int = 5) -> list[dict[str, An
                 "title": f"Search disabled for: {query}",
                 "url": "https://search.brave.com/",
                 "snippet": (
-                    "Web search is disabled. Set web_search.enabled=true and provide "
-                    "web_search.brave_api_key in config.yaml."
+                    "Web search is disabled. Set web_search.enabled=true in config.yaml."
                 ),
             }
         ]
 
-    if _web_search_provider != "brave":
+    provider = _web_search_provider
+    if provider not in {"brave", "duckduckgo", "ddg"}:
         return [
             {
                 "title": f"Unsupported search provider for: {query}",
                 "url": "https://search.brave.com/",
                 "snippet": (
                     f"Configured provider '{_web_search_provider}' is not supported yet. "
-                    "Use provider='brave'."
+                    "Use provider='brave' or 'duckduckgo'."
                 ),
             }
         ]
 
-    if not _brave_api_key:
-        return [
-            {
-                "title": f"Search key missing for: {query}",
-                "url": "https://search.brave.com/",
-                "snippet": (
-                    "Brave Search API key not configured. Add web_search.brave_api_key in config.yaml."
-                ),
-            }
-        ]
-
+    count = max(1, min(int(max_results), 20))
     try:
-        count = max(1, min(int(max_results), 20))
-        async with httpx.AsyncClient(
-            timeout=float(_web_search_timeout_seconds),
-            follow_redirects=True,
-            headers={
-                "Accept": "application/json",
-                "X-Subscription-Token": _brave_api_key,
-                "User-Agent": "CloseClaw/0.1",
-            },
-        ) as client:
-            response = await client.get(
-                "https://api.search.brave.com/res/v1/web/search",
-                params={"q": query, "count": count},
-            )
-            response.raise_for_status()
-            payload = response.json() if response.content else {}
-
-        results = payload.get("web", {}).get("results", [])
-        normalized: list[dict[str, Any]] = []
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            normalized.append(
-                {
-                    "title": item.get("title") or "(no title)",
-                    "url": item.get("url") or "",
-                    "snippet": item.get("description") or "",
-                }
-            )
+        if provider == "brave" and _brave_api_key:
+            normalized = await _search_with_brave(query, count)
+            fallback_used = False
+        elif provider == "brave":
+            logger.warning("Brave provider selected but API key missing. Falling back to DuckDuckGo.")
+            normalized = await _search_with_duckduckgo(query, count)
+            fallback_used = True
+        else:
+            normalized = await _search_with_duckduckgo(query, count)
+            fallback_used = False
 
         if not normalized:
             return [
                 {
                     "title": f"No results for: {query}",
-                    "url": "https://search.brave.com/",
-                    "snippet": "Brave Search returned no web results.",
+                    "url": "https://duckduckgo.com/",
+                    "snippet": "Search provider returned no web results.",
                 }
             ]
+
+        if fallback_used:
+            normalized[0]["snippet"] = (
+                f"[Fallback: DuckDuckGo] {normalized[0].get('snippet', '')}"
+            ).strip()
 
         return normalized
     except Exception as e:
@@ -165,7 +266,7 @@ async def web_search_impl(query: str, max_results: int = 5) -> list[dict[str, An
         return [
             {
                 "title": f"Web search error for: {query}",
-                "url": "https://search.brave.com/",
+                "url": "https://duckduckgo.com/",
                 "snippet": f"Error: {str(e)}",
             }
         ]

@@ -325,6 +325,7 @@ web_search:
     provider: brave
     brave_api_key: BSA-test-key
     timeout_seconds: 15
+    duckduckgo_min_interval_seconds: 1.2
 """
         config_path = Path(temp_workspace) / "web_search_config.yaml"
         config_path.write_text(config_content)
@@ -336,6 +337,7 @@ web_search:
         assert config.web_search.provider == "brave"
         assert config.web_search.brave_api_key == "BSA-test-key"
         assert config.web_search.timeout_seconds == 15
+        assert config.web_search.duckduckgo_min_interval_seconds == 1.2
 
     def test_safety_mode_and_guardian_config_parses(self, temp_workspace):
         """safety block should parse security_mode and consensus guardian settings."""

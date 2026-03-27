@@ -305,6 +305,7 @@ def create_agent(config: CloseCrawlConfig,
         provider=config.web_search.provider,
         brave_api_key=config.web_search.brave_api_key,
         timeout_seconds=config.web_search.timeout_seconds,
+        duckduckgo_min_interval_seconds=config.web_search.duckduckgo_min_interval_seconds,
     )
     
     configure_shell_sandbox(

@@ -23,10 +23,12 @@ llm:  # LLM provider settings.
 
 
 web_search:  # Optional agent web search provider settings.
-  enabled: false  # Set true to allow agent web search calls.
-  provider: "brave"  # Currently supported provider: brave.
-  brave_api_key: "BSA-XXXXXXXXXXXXXXXX"  # Brave Search API key.
+  enabled: true  # Set true to allow agent web search calls.
+  # Default fallback to DuckDuckGo if Brave API key is not provided.
+  provider: "duckduckgo"  # Supported providers: brave, duckduckgo.
+  brave_api_key: "your-search-api-key"  # Optional Brave Search API key; empty uses DuckDuckGo fallback.
   timeout_seconds: 30  # HTTP timeout for search requests.
+  duckduckgo_min_interval_seconds: 2.0  # Min seconds between DuckDuckGo requests to reduce rate-limit risk.
 
 
 mcp:  # Optional MCP server definitions used by mcp-health diagnostics.

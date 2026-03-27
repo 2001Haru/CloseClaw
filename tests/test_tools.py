@@ -258,15 +258,29 @@ class TestShellTools:
 
 class TestWebTools:
     @pytest.mark.asyncio
-    async def test_web_search_requires_brave_api_key(self):
+    async def test_web_search_brave_without_key_falls_back_to_duckduckgo(self, monkeypatch):
         from closeclaw.tools.web_tools import configure_web_search, web_search_impl
 
         configure_web_search(enabled=True, provider="brave", brave_api_key=None, timeout_seconds=10)
+
+        async def _fake_ddg(query: str, count: int):
+            assert query == "python"
+            assert count == 3
+            return [
+                {
+                    "title": "DDG Python",
+                    "url": "https://duckduckgo.com/?q=python",
+                    "snippet": "duckduckgo result",
+                }
+            ]
+
+        monkeypatch.setattr("closeclaw.tools.web_tools._search_with_duckduckgo", _fake_ddg)
         results = await web_search_impl("python", max_results=3)
 
         assert isinstance(results, list)
-        assert len(results) >= 1
-        assert "api key" in results[0]["snippet"].lower()
+        assert len(results) == 1
+        assert results[0]["title"] == "DDG Python"
+        assert "fallback: duckduckgo" in results[0]["snippet"].lower()
 
     @pytest.mark.asyncio
     async def test_web_search_brave_success_mapping(self, monkeypatch):
@@ -313,6 +327,42 @@ class TestWebTools:
         assert len(results) == 1
         assert results[0]["title"] == "Python"
         assert results[0]["url"] == "https://www.python.org"
+
+    @pytest.mark.asyncio
+    async def test_web_search_duckduckgo_enforces_rate_limit(self, monkeypatch):
+        from closeclaw.tools.web_tools import configure_web_search, web_search_impl
+
+        configure_web_search(
+            enabled=True,
+            provider="duckduckgo",
+            brave_api_key=None,
+            timeout_seconds=10,
+            duckduckgo_min_interval_seconds=1.5,
+        )
+
+        calls = {"n": 0}
+
+        async def _fake_rate_limit():
+            calls["n"] += 1
+
+        def _fake_ddg_sync(query: str, count: int):
+            return [
+                {
+                    "title": f"{query}-{count}",
+                    "url": "https://duckduckgo.com/",
+                    "snippet": "ok",
+                }
+            ]
+
+        monkeypatch.setattr("closeclaw.tools.web_tools._enforce_duckduckgo_rate_limit", _fake_rate_limit)
+        monkeypatch.setattr("closeclaw.tools.web_tools._duckduckgo_text_search_sync", _fake_ddg_sync)
+
+        r1 = await web_search_impl("python", max_results=2)
+        r2 = await web_search_impl("pytest", max_results=2)
+
+        assert len(r1) == 1
+        assert len(r2) == 1
+        assert calls["n"] == 2
 
 
 class TestCronTools:

@@ -257,6 +257,7 @@ class WebSearchConfig:
     provider: str = "brave"
     brave_api_key: Optional[str] = None
     timeout_seconds: int = 30
+    duckduckgo_min_interval_seconds: float = 2.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -264,6 +265,7 @@ class WebSearchConfig:
             "provider": self.provider,
             "brave_api_key": self.brave_api_key,
             "timeout_seconds": self.timeout_seconds,
+            "duckduckgo_min_interval_seconds": self.duckduckgo_min_interval_seconds,
         }
 
 
@@ -569,6 +571,7 @@ class ConfigLoader:
             provider=web_search_raw.get("provider", "brave"),
             brave_api_key=web_search_raw.get("brave_api_key"),
             timeout_seconds=web_search_raw.get("timeout_seconds", 30),
+            duckduckgo_min_interval_seconds=web_search_raw.get("duckduckgo_min_interval_seconds", 2.0),
         )
         
         # Main config
@@ -626,6 +629,7 @@ web_search:
     provider: "brave"
     brave_api_key: ${BRAVE_SEARCH_API_KEY}
     timeout_seconds: 30
+    duckduckgo_min_interval_seconds: 2.0
 
 # Channels configuration (optional)
 channels:
