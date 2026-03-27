@@ -1,19 +1,15 @@
-# HEARTBEAT Template
+# HEARTBEAT 
 
-## Purpose
-Use this file to define periodic tasks for the heartbeat trigger.
+This is heartbeat task document. You are woken up periodicly and required to do the things below:
 
-## Rules
-1. Keep tasks actionable and concrete.
-2. Prefer bounded outputs (files, summaries, checks).
-3. Avoid destructive operations unless explicitly approved.
+## Task Check
 
-## Suggested Sections
-- Daily checks
-- Weekly maintenance
-- Alert follow-up
+Check that if there are runing or uncomplete tasks. If so, continue, work, supervise, or truncate the faulty task. If there exists a TODO list, check the phase of the current situation.
 
-## Example Tasks
-1. Check unresolved TODO items in key docs and summarize blockers.
-2. Scan recent test failures and propose one minimal fix path.
-3. Review stale temporary files under workspace and suggest cleanup candidates.
+## Memory Organization
+
+Take a look at the memory files for the past few days and MEMORY.md. Check that if there are any unorganized memory, including important decisions, events and transformation. If so, organize them.
+
+
+If you feel there's nothing to do, you could save your user's tokens and just reply with [HEARTBEAT_OK].
+

@@ -106,6 +106,7 @@ safety:  # Safety, auth, and audit controls.
 
   default_need_auth: false  # Global fallback auth policy; false means tool-level need_auth drives approvals.
   command_blacklist_enabled: true  # Enable shell command blacklist checks.
+  command_policy_profile: "balanced"  # Shell policy profile: balanced | strict.
   custom_blacklist_rules: []  # Additional regex blacklist rules.
 
   audit_log_enabled: true  # Enable audit log writing.

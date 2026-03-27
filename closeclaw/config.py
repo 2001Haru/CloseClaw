@@ -64,6 +64,7 @@ class SafetyConfig:
     consensus_guardian_timeout_seconds: float = 20.0
     consensus_guardian_prompt: Optional[str] = None
     command_blacklist_enabled: bool = True
+    command_policy_profile: str = "balanced"
     custom_blacklist_rules: list[str] = field(default_factory=list)
     # Backward-compatible alias for older tests/configs.
     enable_audit_log: bool = True
@@ -80,6 +81,7 @@ class SafetyConfig:
             "consensus_guardian_timeout_seconds": self.consensus_guardian_timeout_seconds,
             "consensus_guardian_prompt": self.consensus_guardian_prompt,
             "command_blacklist_enabled": self.command_blacklist_enabled,
+            "command_policy_profile": self.command_policy_profile,
             "custom_blacklist_rules": self.custom_blacklist_rules,
             "enable_audit_log": self.enable_audit_log,
             "audit_log_enabled": self.audit_log_enabled,
@@ -476,6 +478,7 @@ class ConfigLoader:
             consensus_guardian_timeout_seconds=float(safety_raw.get("consensus_guardian_timeout_seconds", 20.0)),
             consensus_guardian_prompt=safety_raw.get("consensus_guardian_prompt"),
             command_blacklist_enabled=safety_raw.get("command_blacklist_enabled", True),
+            command_policy_profile=str(safety_raw.get("command_policy_profile", "balanced")),
             custom_blacklist_rules=safety_raw.get("custom_blacklist_rules", []),
             enable_audit_log=enable_audit_log,
             audit_log_enabled=enable_audit_log,
@@ -656,6 +659,7 @@ safety:
   
   # Enable command blacklist for shell operations
   command_blacklist_enabled: true
+  command_policy_profile: balanced
   
   # Custom regex patterns to block (e.g., additional dangerous commands)
   custom_blacklist_rules: []

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from pathlib import Path
@@ -26,7 +27,7 @@ class HeartbeatService:
         enabled: bool = True,
         interval_s: int = 1800,
         decision_fn: Optional[Callable[[str], Awaitable[HeartbeatDecision]]] = None,
-        on_execute: Optional[Callable[[str], Awaitable[Any]]] = None,
+        on_execute: Optional[Callable[..., Awaitable[Any]]] = None,
         on_notify: Optional[Callable[[Any], Awaitable[None]]] = None,
         notify_enabled: bool = False,
         quiet_hours_enabled: bool = False,
@@ -167,7 +168,11 @@ class HeartbeatService:
             target_channel,
             target_chat_id,
         )
-        exec_result = await self._on_execute(decision.tasks)
+        exec_result = await self._invoke_execute(
+            decision.tasks,
+            target_channel=target_channel,
+            target_chat_id=target_chat_id,
+        )
         if self._notify_enabled and self._on_notify and exec_result is not None:
             await self._on_notify(exec_result)
 
@@ -186,6 +191,35 @@ class HeartbeatService:
             result.duration_ms,
         )
         return result
+
+    async def _invoke_execute(
+        self,
+        tasks: str,
+        *,
+        target_channel: str,
+        target_chat_id: str,
+    ) -> Any:
+        """Execute heartbeat callback with backward-compatible signature handling."""
+        if not self._on_execute:
+            return None
+
+        try:
+            signature = inspect.signature(self._on_execute)
+            accepts_var_kwargs = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in signature.parameters.values()
+            )
+            if accepts_var_kwargs or "target_channel" in signature.parameters or "target_chat_id" in signature.parameters:
+                return await self._on_execute(
+                    tasks,
+                    target_channel=target_channel,
+                    target_chat_id=target_chat_id,
+                )
+        except (TypeError, ValueError):
+            # Fallback for callables without inspectable signature.
+            pass
+
+        return await self._on_execute(tasks)
 
     def _read_heartbeat_file(self) -> str:
         """Read HEARTBEAT.md from CloseClaw Memory root."""

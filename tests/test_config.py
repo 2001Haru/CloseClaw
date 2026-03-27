@@ -102,6 +102,7 @@ class TestSafetyConfig:
         
         assert config.enable_hitl is True
         assert config.enable_audit_log is True
+        assert config.command_policy_profile == "balanced"
     
     def test_safety_config_custom(self):
         """Test custom safety config."""
@@ -109,11 +110,13 @@ class TestSafetyConfig:
             enable_hitl=False,
             enable_audit_log=True,
             audit_log_path="/var/log/closeclaw/audit.jsonl",
-            audit_log_retention_days=30
+            audit_log_retention_days=30,
+            command_policy_profile="strict",
         )
         
         assert config.enable_hitl is False
         assert config.audit_log_retention_days == 30
+        assert config.command_policy_profile == "strict"
 
 
 class TestCloseCrawlConfig:

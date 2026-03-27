@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_MESSAGE_LIMIT = 4096
 TELEGRAM_SAFE_CHUNK_SIZE = 3500
+_MARKDOWN_V2_SPECIAL_CHARS = r"_*[]()~`>#+-=|{}.!"
 
 # Lazy import to avoid hard dependency
 try:
@@ -164,6 +165,12 @@ class TelegramChannel(BaseChannel):
             return
         
         bot = self._app.bot
+
+        def _escape_markdown_v2(text: str) -> str:
+            if not text:
+                return ""
+            pattern = f"([{re.escape(_MARKDOWN_V2_SPECIAL_CHARS)}])"
+            return re.sub(pattern, r"\\\1", text)
         
         def chunk_text(text: str, limit: int = TELEGRAM_SAFE_CHUNK_SIZE) -> list[str]:
             if len(text) <= limit:
@@ -172,28 +179,28 @@ class TelegramChannel(BaseChannel):
             chunks: list[str] = []
             remaining = text
             is_in_code_block = False
-            
+
             while len(remaining) > limit:
                 split_at = remaining.rfind("\n", 0, limit)
                 if split_at <= 0:
                     split_at = limit
-                    
+
                 chunk = remaining[:split_at]
-                
+
                 # Count triple backticks to track code block state
                 code_block_count = chunk.count("```")
                 if code_block_count % 2 != 0:
                     is_in_code_block = not is_in_code_block
-                    
+
                 if is_in_code_block:
                     chunk += "\n```"
-                    
+
                 chunks.append(chunk)
-                
+
                 remaining = remaining[split_at:].lstrip("\n")
                 if is_in_code_block:
                     remaining = "```\n" + remaining
-                    
+
             if remaining:
                 chunks.append(remaining)
             return chunks
@@ -205,7 +212,7 @@ class TelegramChannel(BaseChannel):
         def _is_message_too_long_error(err: Exception) -> bool:
             return bool(re.search(r"message.*too long", str(err), flags=re.IGNORECASE))
 
-        # Helper to safely send message with Markdown fallback and chunking
+        # Helper to safely send message with Markdown-first strategy and robust fallbacks.
         async def safe_send(text: str, **kwargs: Any) -> None:
             if not text:
                 text = "OK"
@@ -224,17 +231,32 @@ class TelegramChannel(BaseChannel):
                         return
 
                     if _is_markdown_related_error(e):
-                        logger.warning(f"Telegram Markdown parse error, falling back to plain text: {e}")
+                        logger.info(f"Telegram Markdown parse error, retrying escaped MarkdownV2: {e}")
+                        escaped_chunk = _escape_markdown_v2(chunk)
                         try:
-                            await bot.send_message(chat_id=chat_id, text=chunk, **chunk_kwargs)
-                        except Exception as plain_err:
-                            if _is_message_too_long_error(plain_err) and len(chunk) > TELEGRAM_MESSAGE_LIMIT:
-                                for tiny in chunk_text(chunk, limit=TELEGRAM_MESSAGE_LIMIT):
-                                    await bot.send_message(chat_id=chat_id, text=tiny)
-                            elif "chat not found" in str(plain_err).lower():
-                                logger.warning("Telegram chat not found for chat_id=%s; dropping outbound message", chat_id)
-                                return
-                            else:
+                            await bot.send_message(
+                                chat_id=chat_id,
+                                text=escaped_chunk,
+                                parse_mode="MarkdownV2",
+                                **chunk_kwargs,
+                            )
+                            continue
+                        except Exception as escaped_err:
+                            logger.warning(
+                                "Telegram escaped MarkdownV2 send failed, falling back to plain text: %s",
+                                escaped_err,
+                            )
+                            try:
+                                await bot.send_message(chat_id=chat_id, text=chunk, **chunk_kwargs)
+                                continue
+                            except Exception as plain_err:
+                                if _is_message_too_long_error(plain_err) and len(chunk) > TELEGRAM_MESSAGE_LIMIT:
+                                    for tiny in chunk_text(chunk, limit=TELEGRAM_MESSAGE_LIMIT):
+                                        await bot.send_message(chat_id=chat_id, text=tiny)
+                                    continue
+                                if "chat not found" in str(plain_err).lower():
+                                    logger.warning("Telegram chat not found for chat_id=%s; dropping outbound message", chat_id)
+                                    return
                                 raise
                     elif _is_message_too_long_error(e) and len(chunk) > TELEGRAM_MESSAGE_LIMIT:
                         for tiny in chunk_text(chunk, limit=TELEGRAM_MESSAGE_LIMIT):
@@ -253,13 +275,15 @@ class TelegramChannel(BaseChannel):
             if tool_calls:
                 for tc in tool_calls:
                     name = tc.get("name", "?") if isinstance(tc, dict) else str(tc)
-                    parts.append(f"[TOOL] *Tool:* `{name}`")
+                    safe_name = str(name).replace("`", "'")
+                    parts.append(f"[TOOL] *Tool:* `{safe_name}`")
             
             if tool_results:
                 for tr in tool_results:
                     status = tr.get("status", "?") if isinstance(tr, dict) else str(tr)
                     icon = "[OK]" if status == "success" else ("[TASK]" if status == "task_created" else "[ERR]")
-                    parts.append(f"{icon} *Status:* `{status}`")
+                    safe_status = str(status).replace("`", "'")
+                    parts.append(f"{icon} *Status:* `{safe_status}`")
 
                     if isinstance(tr, dict):
                         metadata = tr.get("metadata") or {}
@@ -322,6 +346,12 @@ class TelegramChannel(BaseChannel):
     
     async def _send_auth_request_message(self, chat_id: int, response: dict[str, Any]) -> None:
         """Send HITL confirmation message with Inline Keyboard."""
+        def _escape_markdown_v2(text: str) -> str:
+            if not text:
+                return ""
+            pattern = f"([{re.escape(_MARKDOWN_V2_SPECIAL_CHARS)}])"
+            return re.sub(pattern, r"\\\1", text)
+
         auth_request_id = response.get("auth_request_id", "unknown")
         tool_name = response.get("tool_name", "unknown")
         description = response.get("description", "")
@@ -330,13 +360,16 @@ class TelegramChannel(BaseChannel):
         auth_mode = response.get("auth_mode")
         
         # Build message text
+        safe_tool_name = str(tool_name).replace("`", "'")
+        safe_auth_mode = str(auth_mode).replace("`", "'") if auth_mode is not None else None
+
         text_parts = [
             "*Sensitive Operation - Authorization Required*",
-            f"Tool: `{tool_name}`",
+            f"Tool: `{safe_tool_name}`",
             f"Description: {description}",
         ]
         if auth_mode:
-            text_parts.append(f"Mode: `{auth_mode}`")
+            text_parts.append(f"Mode: `{safe_auth_mode}`")
         if reason:
             text_parts.append(f"Reason: {reason}")
         
@@ -363,12 +396,22 @@ class TelegramChannel(BaseChannel):
             )
         except Exception as e:
             if "parse entities" in str(e).lower() or "markdown" in str(e).lower():
-                logger.warning(f"Telegram Markdown parse error in auth request, falling back to plain text: {e}")
-                await self._app.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    reply_markup=keyboard,
-                )
+                logger.info("Telegram Markdown parse error in auth request, retrying escaped MarkdownV2: %s", e)
+                escaped_text = _escape_markdown_v2(text)
+                try:
+                    await self._app.bot.send_message(
+                        chat_id=chat_id,
+                        text=escaped_text,
+                        reply_markup=keyboard,
+                        parse_mode="MarkdownV2",
+                    )
+                except Exception as escaped_err:
+                    logger.warning("Telegram auth request escaped MarkdownV2 send failed: %s", escaped_err)
+                    await self._app.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        reply_markup=keyboard,
+                    )
             else:
                 raise
         

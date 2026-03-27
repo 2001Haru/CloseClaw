@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from closeclaw.mcp import MCPBridge, MCPClientPool
+from closeclaw.mcp.projection import MCPToolProjector
 from closeclaw.mcp.transport import MCPHttpClient
 from closeclaw.services import ToolExecutionService
 from closeclaw.tools.adaptation import ToolAdaptationLayer
@@ -151,3 +152,42 @@ async def test_mcp_bridge_sync_fails_when_server_unhealthy():
     bridge = MCPBridge(pool)
     with pytest.raises(RuntimeError, match="unhealthy"):
         await bridge.sync_server_tools("bad_server", service)
+
+
+def test_mcp_projector_defaults_need_auth_to_true_when_missing():
+    projector = MCPToolProjector()
+    projected = projector.project(
+        "srv1",
+        {
+            "name": "remote_exec",
+            "description": "Run remote command",
+            "input_schema": {"properties": {"command": {"type": "string"}}},
+            "tool_type": "unknown_custom_type",
+        },
+    )
+
+    assert projected.spec.need_auth is True
+    assert projected.spec.tool_type == "shell"
+    assert projected.spec.metadata.get("need_auth_default_applied") is True
+
+
+def test_mcp_projector_infers_file_tool_type_from_schema():
+    projector = MCPToolProjector()
+    projected = projector.project(
+        "srv2",
+        {
+            "name": "save_report",
+            "description": "Store report to disk",
+            "input_schema": {
+                "properties": {
+                    "destination_path": {"type": "string"},
+                    "content": {"type": "string"},
+                }
+            },
+            "need_auth": False,
+            "tool_type": "mystery",
+        },
+    )
+
+    assert projected.spec.need_auth is False
+    assert projected.spec.tool_type == "file"

@@ -276,7 +276,10 @@ def create_agent(config: CloseCrawlConfig,
     
     if config.safety.command_blacklist_enabled:
         middleware_chain.add_middleware(
-            SafetyGuard(custom_rules=config.safety.custom_blacklist_rules)
+            SafetyGuard(
+                custom_rules=config.safety.custom_blacklist_rules,
+                profile=config.safety.command_policy_profile,
+            )
         )
     
     middleware_chain.add_middleware(PathSandbox(workspace_root=config.workspace_root))
@@ -495,6 +498,58 @@ async def _enqueue_cron_wake_message(
     }
 
 
+async def _enqueue_heartbeat_wake_message(
+    *,
+    wake_queues: dict[str, asyncio.Queue[Message]],
+    tasks: str,
+    target_channel: str = "",
+    target_chat_id: str = "",
+) -> dict[str, Any]:
+    """Inject a heartbeat wake message into channel input queue for normal main-loop processing."""
+    if not wake_queues:
+        return {"queued": False, "reason": "no_active_channel_queue"}
+
+    requested_channel = str(target_channel or "").lower().strip()
+    if requested_channel in wake_queues:
+        route_channel = requested_channel
+    elif "cli" in wake_queues:
+        route_channel = "cli"
+    else:
+        route_channel = next(iter(wake_queues.keys()))
+
+    task_text = str(tasks or "").strip()
+    heartbeat_prompt = (
+        "[HEARTBEAT]\n"
+        "Please run a periodic maintenance turn based on HEARTBEAT.md.\n"
+        "Execute the checklist below safely and report concise results.\n\n"
+        f"{task_text}"
+    )
+
+    message = Message(
+        id=f"heartbeat_{int(time.time() * 1000)}",
+        channel_type=route_channel,
+        sender_id="system",
+        sender_name="System",
+        content=heartbeat_prompt,
+        metadata={
+            "role": "system",
+            "source": "heartbeat",
+            "heartbeat": True,
+        },
+    )
+
+    target_to = str(target_chat_id or "").strip()
+    if target_to not in {"", "direct"}:
+        message.metadata["_chat_id"] = target_to
+
+    await wake_queues[route_channel].put(message)
+    return {
+        "queued": True,
+        "channel": route_channel,
+        "message_id": message.id,
+    }
+
+
 async def run_agent(
     config_path: str,
     llm_provider: Any = None,
@@ -573,10 +628,29 @@ async def run_agent(
         print(f"[CloseClaw] No channels enabled for mode={normalized_mode}. Please check config.yaml")
         return
     
-    async def _heartbeat_execute(tasks: str) -> dict[str, Any]:
-        # S1 MVP: keep heartbeat execution side-effect-free until direct-turn adapter lands in S2/S3.
-        logger.info("Heartbeat run requested (S1 MVP noop execute), tasks_preview=%s", tasks[:120])
-        return {"status": "noop", "tasks": tasks}
+    async def _heartbeat_execute(
+        tasks: str,
+        *,
+        target_channel: str = "",
+        target_chat_id: str = "",
+    ) -> dict[str, Any]:
+        logger.info(
+            "Heartbeat run requested, dispatching wake message target_channel=%s target_chat_id=%s tasks_preview=%s",
+            target_channel or "auto",
+            target_chat_id or "direct",
+            tasks[:120],
+        )
+        enqueue_result = await _enqueue_heartbeat_wake_message(
+            wake_queues=wake_queues,
+            tasks=tasks,
+            target_channel=target_channel,
+            target_chat_id=target_chat_id,
+        )
+        return {
+            "status": "queued" if enqueue_result.get("queued") else "noop",
+            "tasks": tasks,
+            **enqueue_result,
+        }
 
     async def _heartbeat_notify(payload: Any) -> None:
         logger.info("Heartbeat notify (S1 MVP): %s", str(payload)[:200])

@@ -1,8 +1,9 @@
 """Tests for unified ToolExecutionService entrypoint."""
 
 import pytest
+from pathlib import Path
 
-from closeclaw.middleware import AuthPermissionMiddleware, MiddlewareChain
+from closeclaw.middleware import AuthPermissionMiddleware, MiddlewareChain, PathSandbox
 from closeclaw.safety import SecurityMode
 from closeclaw.services import ToolExecutionService
 from closeclaw.tools.adaptation import ToolAdaptationLayer
@@ -157,3 +158,55 @@ async def test_consensus_allow_metadata_propagates_to_tool_result(sample_session
     assert result.metadata.get("auth_mode") == "consensus"
     assert result.metadata.get("reason_code") == "SAFE"
     assert result.metadata.get("guardian_comment") == "looks good"
+
+
+@pytest.mark.asyncio
+async def test_execute_authorized_request_rechecks_middleware_and_sanitizes_force_arg(sample_session, temp_workspace):
+    captured = {}
+
+    async def write_handler(path: str):
+        captured["path"] = path
+        return "ok"
+
+    tools = {
+        "write_file": Tool(
+            name="write_file",
+            description="Write file",
+            type=ToolType.FILE,
+            need_auth=True,
+            handler=write_handler,
+            parameters={"path": {"type": "string"}},
+        )
+    }
+
+    chain = MiddlewareChain(
+        [
+            PathSandbox(temp_workspace),
+            AuthPermissionMiddleware(default_need_auth=False),
+        ]
+    )
+    service = ToolExecutionService(
+        tools=tools,
+        middleware_chain=chain,
+        tool_adaptation_layer=ToolAdaptationLayer(),
+        session_getter=lambda: sample_session,
+        task_manager_getter=lambda: None,
+    )
+
+    with pytest.raises(PermissionError):
+        await service.execute_authorized_request(
+            {
+                "tool_name": "write_file",
+                "arguments": {"path": "/etc/passwd"},
+            }
+        )
+
+    result = await service.execute_authorized_request(
+        {
+            "tool_name": "write_file",
+            "arguments": {"path": "ok.txt"},
+        }
+    )
+    assert result == "ok"
+    assert "path" in captured
+    assert Path(captured["path"]).resolve().is_relative_to(Path(temp_workspace).resolve())

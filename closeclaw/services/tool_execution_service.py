@@ -6,6 +6,9 @@ through a single runtime path.
 
 from __future__ import annotations
 
+import copy
+import inspect
+import time
 from typing import Any, Callable, Optional
 
 from ..compatibility import NativeAdapter, ToolSpecV2
@@ -79,12 +82,42 @@ class ToolExecutionService:
         user_id = session.user_id if session else None
 
         if self._middleware_chain:
-            auth_result = await self._middleware_chain.check_permission(
-                tool=permission_tool,
-                arguments=tool_call.arguments,
-                session=session,
-                user_id=user_id,
-            )
+            check_permission = self._middleware_chain.check_permission
+            base_kwargs: dict[str, Any] = {
+                "tool": permission_tool,
+                "arguments": tool_call.arguments,
+                "session": session,
+                "user_id": user_id,
+            }
+            extra_kwargs: dict[str, Any] = {
+                "raw_arguments": copy.deepcopy(tool_call.arguments),
+                "tool_source": spec.source,
+                "tool_source_ref": spec.source_ref,
+                "tool_type": spec.tool_type,
+            }
+
+            supports_var_kwargs = False
+            accepted_params: set[str] = set()
+            try:
+                signature = inspect.signature(check_permission)
+                for param in signature.parameters.values():
+                    if param.kind == inspect.Parameter.VAR_KEYWORD:
+                        supports_var_kwargs = True
+                    elif param.kind in {
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        inspect.Parameter.KEYWORD_ONLY,
+                    }:
+                        accepted_params.add(param.name)
+            except (TypeError, ValueError):
+                supports_var_kwargs = True
+
+            if supports_var_kwargs:
+                call_kwargs = {**base_kwargs, **extra_kwargs}
+            else:
+                call_kwargs = {k: v for k, v in base_kwargs.items() if k in accepted_params}
+                call_kwargs.update({k: v for k, v in extra_kwargs.items() if k in accepted_params})
+
+            auth_result = await check_permission(**call_kwargs)
 
             if auth_result["status"] == "block":
                 return ToolResult(
@@ -117,11 +150,24 @@ class ToolExecutionService:
                     "guardian_comment": auth_result.get("guardian_comment"),
                 }
 
+        execution_args = dict(tool_call.arguments) if isinstance(tool_call.arguments, dict) else {}
+        execution_args.pop("_force_execute", None)
+        sanitized_call = ToolCall(
+            tool_id=tool_call.tool_id,
+            name=tool_call.name,
+            arguments=execution_args,
+        )
+
         if is_external:
-            return await self._execute_external_tool_call(tool_call, spec)
+            result = await self._execute_external_tool_call(sanitized_call, spec)
+            result.metadata = {
+                **(result.metadata or {}),
+                **{k: v for k, v in permission_context.items() if v is not None},
+            }
+            return result
 
         result = await self._tool_adaptation_layer.execute_tool_call(
-            tool_call=tool_call,
+            tool_call=sanitized_call,
             available_tools=self._tools,
             task_manager=self._task_manager_getter(),
             direct_executor=self._execute_tool_directly,
@@ -137,24 +183,28 @@ class ToolExecutionService:
         return result
 
     async def execute_authorized_request(self, auth_payload: dict[str, Any]) -> Any:
-        """Execute a previously authorized request bypassing middleware auth gate."""
+        """Execute a previously authorized request with full middleware re-validation."""
         tool_name = auth_payload.get("tool_name")
         if not tool_name:
             raise ValueError("Missing tool_name in auth payload")
 
         raw_args = auth_payload.get("arguments", {})
         arguments = dict(raw_args) if isinstance(raw_args, dict) else {}
-        arguments.pop("_force_execute", None)
+        arguments["_force_execute"] = True
+        replay_call = ToolCall(
+            tool_id=f"auth_replay_{int(time.time() * 1000)}",
+            name=str(tool_name),
+            arguments=arguments,
+        )
+        replay_result = await self.execute_tool_call(replay_call)
 
-        tool = self._tools.get(tool_name)
-        if tool:
-            return await tool.handler(**arguments)
-
-        handler = self._external_handlers.get(tool_name)
-        if handler:
-            return await handler(**arguments)
-
-        raise ValueError(f"Tool '{tool_name}' not found")
+        if replay_result.status in {"success", "task_created"}:
+            return replay_result.result
+        if replay_result.status == "blocked":
+            raise PermissionError(replay_result.error or "Blocked during authorization replay")
+        if replay_result.status == "auth_required":
+            raise PermissionError("Authorization replay still requires approval")
+        raise RuntimeError(replay_result.error or f"Authorization replay failed: {replay_result.status}")
 
     async def _execute_tool_directly(self, tool_call: ToolCall) -> ToolResult:
         """Direct tool execution for sync/fast calls routed by adaptation layer."""
@@ -233,8 +283,11 @@ class ToolExecutionService:
 
     def _tool_type_from_str(self, tool_type: str) -> ToolType:
         normalized = (tool_type or "").strip().lower()
-        if normalized == ToolType.FILE.value:
+        if normalized in {ToolType.FILE.value, "filesystem", "fs", "document", "doc"}:
             return ToolType.FILE
-        if normalized == ToolType.SHELL.value:
+        if normalized in {ToolType.SHELL.value, "exec", "execute", "command", "cmd", "terminal"}:
             return ToolType.SHELL
-        return ToolType.WEBSEARCH
+        if normalized in {ToolType.WEBSEARCH.value, "web", "network", "http", "https", "url", "search", "api"}:
+            return ToolType.WEBSEARCH
+        # Conservative fallback for unknown external tool types.
+        return ToolType.SHELL

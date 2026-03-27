@@ -3,8 +3,11 @@
 import pytest
 import asyncio
 import logging
+import shutil
+import tempfile
 from typing import Optional
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from closeclaw.agents import AgentCore
@@ -13,12 +16,25 @@ from closeclaw.agents.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
 
+@pytest.fixture
+def make_test_workspace():
+    """Create a writable isolated workspace under tests directory."""
+    base_dir = Path("C:/Users/HAL/.codex/memories/.closeclaw_test_tmp")
+    base_dir.mkdir(parents=True, exist_ok=True)
+    workspace = Path(
+        tempfile.mkdtemp(prefix="agent-main-loop-", dir=str(base_dir))
+    )
+    try:
+        yield str(workspace)
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
 
 class TestAgentMainLoop:
     """Test cases for Agent.run() main loop with TaskManager integration."""
     
     @pytest.fixture
-    async def agent_setup(self):
+    async def agent_setup(self, make_test_workspace):
         """Setup agent with mocked LLM and TaskManager."""
         mock_llm = AsyncMock()
         config = AgentConfig(
@@ -26,12 +42,13 @@ class TestAgentMainLoop:
             temperature=0.7,
             system_prompt="You are a helpful assistant."
         )
+        workspace_root = make_test_workspace
         
         agent = AgentCore(
             agent_id="test_agent",
             llm_provider=mock_llm,
             config=config,
-            workspace_root="/tmp/test",
+            workspace_root=workspace_root,
             admin_user_id="admin_user",
         )
         
@@ -390,7 +407,7 @@ class TestAgentMainLoop:
             agent_id="test_agent_2",
             llm_provider=mock_llm2,
             config=AgentConfig(model="gpt-4", system_prompt="Test"),
-            workspace_root="/tmp/test",
+            workspace_root=agent.workspace_root,
             admin_user_id="admin_user",
         )
         
@@ -412,19 +429,20 @@ class TestAgentMainLoopIntegration:
     """Integration tests for Agent.run() with real TaskManager."""
     
     @pytest.fixture
-    async def integration_setup(self):
+    async def integration_setup(self, make_test_workspace):
         """Setup with real TaskManager (no mocks)."""
         mock_llm = AsyncMock()
         config = AgentConfig(
             model="gpt-4",
             temperature=0.7,
         )
+        workspace_root = make_test_workspace
         
         agent = AgentCore(
             agent_id="integration_agent",
             llm_provider=mock_llm,
             config=config,
-            workspace_root="/tmp/test",
+            workspace_root=workspace_root,
             admin_user_id="admin_user",
         )
         

@@ -38,7 +38,7 @@ Use the functions `write_memory_file` or `edit_memory_file` to overwrite or upda
 ALWAYS Take a look at your memory file.
 ALWAYS Write It Down - No "Mental Notes"!
 ALWAYS Write it down when you get information about your USER, WORKSPACE, NEW TOOLS, and ANYTHING IMPORTATNT.
-ALWAYS Write a plan in your memory when dealing with a complex task..
+ALWAYS Write a plan in your memory when dealing with a very great project.
 
 
 ## Safety

@@ -20,7 +20,7 @@ from ..agents.task_manager import TaskManager
 from ..config import ConfigLoader
 from ..heartbeat import HeartbeatService
 from ..cron import CronService, CronSchedule
-from ..memory.workspace_layout import DEFAULT_STATE_FILE_REL
+from ..memory.workspace_layout import DEFAULT_STATE_FILE_REL, memory_root_dir
 from ..mcp import MCPClientPool
 from ..mcp.transport import MCPHttpClient, MCPStdioClient
 from ..providers.registry import PROVIDER_SPECS, find_provider_spec
@@ -382,7 +382,7 @@ class CLIHeartbeatManager:
     def get_status(self) -> dict[str, Any]:
         """Return heartbeat runtime configuration and file readiness."""
         config = self._load_config()
-        heartbeat_file = Path(config.workspace_root) / "HEARTBEAT.md"
+        heartbeat_file = Path(memory_root_dir(config.workspace_root)) / "HEARTBEAT.md"
         return {
             "enabled": config.heartbeat.enabled,
             "interval_s": config.heartbeat.interval_s,

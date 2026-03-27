@@ -42,7 +42,12 @@ class ConsensusGuardian:
 
         try:
             text, _ = await asyncio.wait_for(
-                self._llm_provider.generate(messages=messages, tools=[]),
+                self._llm_provider.generate(
+                    messages=messages,
+                    tools=[],
+                    temperature=0.0,
+                    max_tokens=256,
+                ),
                 timeout=self._timeout_seconds,
             )
         except Exception as exc:
