@@ -74,6 +74,21 @@ Tool Call
 
 ## 📷 效果预览
 
+<p align="center">
+  <table>
+    <tr>
+      <td align="center" width="33%"><strong> 📚 专业的学习帮助者</td>
+      <td align="center" width="33%"><strong> ⏰ 24/7 随时在线的新闻收集者</td>
+      <td align="center" width="33%"><strong> 🔜 随叫随到的私人生活助理</td>
+    </tr>
+    <tr>
+      <td align="center"><img src="assets/preview-1.png" alt="专业的学习帮助者" width="100%"></td>
+      <td align="center"><img src="assets/preview-2.png" alt="24/7 随时在线的新闻收集者" width="100%"></td>
+      <td align="center"><img src="assets/preview-3.png" alt="随叫随到的私人生活助理" width="100%"></td>
+    </tr>
+  </table>
+</p>
+
 ---
 
 ## 🎯 运行模式
@@ -613,6 +628,7 @@ python -m pytest tests -q
 <p align="center">
   <b>CloseClaw：小而强，严谨防护，面向真实自动化。</b>
 </p>
+
 
 
 

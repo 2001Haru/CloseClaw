@@ -72,6 +72,21 @@ Tool Call
 
 ## 📷 Preview
 
+<p align="center">
+  <table>
+    <tr>
+      <td align="center" width="33%"><strong> 📚 Professional Learning Helper</td>
+      <td align="center" width="33%"><strong> ⏰ 24/7 Non-Stop News Collcetor</td>
+      <td align="center" width="33%"><strong> 🔜 On Call Personal Life Assistant</td>
+    </tr>
+    <tr>
+      <td align="center"><img src="assets/preview-1.png" alt="Professional Learning Helper" width="100%"></td>
+      <td align="center"><img src="assets/preview-2.png" alt="24/7 Online News Collcetor" width="100%"></td>
+      <td align="center"><img src="assets/preview-3.png" alt="Personal Life Assistant" width="100%"></td>
+    </tr>
+  </table>
+</p>
+
 ---
 
 ## 🎯 Run Modes
@@ -602,5 +617,7 @@ Thanks for helping improve CloseClaw.
 <p align="center">
   <b>CloseClaw: Small runtime, strong guardrails, serious automation.</b>
 </p>
+
+
 
 
