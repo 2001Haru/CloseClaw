@@ -128,6 +128,7 @@ class DiscordChannel(BaseChannel):
                 return
 
         resp_type = response.get("type", "response")
+        token_prefix = str(response.get("_token_usage_prefix", "") or "").strip()
         text = ""
 
         if resp_type in {"response", "assistant_message"}:
@@ -166,6 +167,8 @@ class DiscordChannel(BaseChannel):
         else:
             text = str(response)
 
+        if resp_type in {"response", "assistant_message"} and token_prefix:
+            text = f"{token_prefix}\n{text}"
         if len(text) > 1900:
             text = text[:1900] + "..."
 

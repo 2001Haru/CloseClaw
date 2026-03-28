@@ -103,6 +103,12 @@ safety:  # Safety, auth, and audit controls.
   consensus_guardian_timeout_seconds: 20.0
   # Optional custom guardian prompt. Leave null to use built-in strict prompt.
   consensus_guardian_prompt: null
+  # Optional guardian-only model override. If missing/invalid, fallback to main llm provider/model.
+  # consensus_guardian_provider: "gemini"
+  # consensus_guardian_model: "gemini-3-flash"
+  # Optional dedicated auth endpoint/credentials for guardian. If omitted, reuse main llm settings.
+  # consensus_guardian_api_key: ""
+  # consensus_guardian_base_url: ""
 
   default_need_auth: false  # Global fallback auth policy; false means tool-level need_auth drives approvals.
   command_blacklist_enabled: true  # Enable shell command blacklist checks.

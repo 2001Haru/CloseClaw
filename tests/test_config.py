@@ -355,6 +355,8 @@ safety:
     security_mode: consensus
     consensus_guardian_timeout_seconds: 42.5
     consensus_guardian_prompt: "You are custom sentinel"
+    consensus_guardian_provider: gemini
+    consensus_guardian_model: gemini-3-flash
     default_need_auth: true
 """
         config_path = Path(temp_workspace) / "safety_mode_config.yaml"
@@ -366,6 +368,8 @@ safety:
         assert config.safety.security_mode == "consensus"
         assert config.safety.consensus_guardian_timeout_seconds == 42.5
         assert config.safety.consensus_guardian_prompt == "You are custom sentinel"
+        assert config.safety.consensus_guardian_provider == "gemini"
+        assert config.safety.consensus_guardian_model == "gemini-3-flash"
         assert config.safety.default_need_auth is True
 
     def test_safety_mode_defaults_to_supervised(self, temp_workspace):
@@ -387,6 +391,8 @@ safety:
         assert config.safety.security_mode == "supervised"
         assert config.safety.consensus_guardian_timeout_seconds == 20.0
         assert config.safety.consensus_guardian_prompt is None
+        assert config.safety.consensus_guardian_provider is None
+        assert config.safety.consensus_guardian_model is None
 
 
 class TestConfigEdgeCases:

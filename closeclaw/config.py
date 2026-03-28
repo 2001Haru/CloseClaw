@@ -63,6 +63,10 @@ class SafetyConfig:
     security_mode: str = "supervised"
     consensus_guardian_timeout_seconds: float = 20.0
     consensus_guardian_prompt: Optional[str] = None
+    consensus_guardian_provider: Optional[str] = None
+    consensus_guardian_model: Optional[str] = None
+    consensus_guardian_api_key: Optional[str] = None
+    consensus_guardian_base_url: Optional[str] = None
     command_blacklist_enabled: bool = True
     command_policy_profile: str = "balanced"
     custom_blacklist_rules: list[str] = field(default_factory=list)
@@ -83,6 +87,10 @@ class SafetyConfig:
             "security_mode": self.security_mode,
             "consensus_guardian_timeout_seconds": self.consensus_guardian_timeout_seconds,
             "consensus_guardian_prompt": self.consensus_guardian_prompt,
+            "consensus_guardian_provider": self.consensus_guardian_provider,
+            "consensus_guardian_model": self.consensus_guardian_model,
+            "consensus_guardian_api_key": self.consensus_guardian_api_key,
+            "consensus_guardian_base_url": self.consensus_guardian_base_url,
             "command_blacklist_enabled": self.command_blacklist_enabled,
             "command_policy_profile": self.command_policy_profile,
             "custom_blacklist_rules": self.custom_blacklist_rules,
@@ -483,6 +491,18 @@ class ConfigLoader:
             security_mode=str(safety_raw.get("security_mode", "supervised")),
             consensus_guardian_timeout_seconds=float(safety_raw.get("consensus_guardian_timeout_seconds", 20.0)),
             consensus_guardian_prompt=safety_raw.get("consensus_guardian_prompt"),
+            consensus_guardian_provider=(
+                str(safety_raw.get("consensus_guardian_provider")).strip()
+                if safety_raw.get("consensus_guardian_provider") is not None
+                else None
+            ),
+            consensus_guardian_model=(
+                str(safety_raw.get("consensus_guardian_model")).strip()
+                if safety_raw.get("consensus_guardian_model") is not None
+                else None
+            ),
+            consensus_guardian_api_key=safety_raw.get("consensus_guardian_api_key"),
+            consensus_guardian_base_url=safety_raw.get("consensus_guardian_base_url"),
             command_blacklist_enabled=safety_raw.get("command_blacklist_enabled", True),
             command_policy_profile=str(safety_raw.get("command_policy_profile", "balanced")),
             custom_blacklist_rules=safety_raw.get("custom_blacklist_rules", []),
@@ -673,6 +693,13 @@ safety:
   # Enable command blacklist for shell operations
   command_blacklist_enabled: true
   command_policy_profile: balanced
+
+  # Optional guardian-only LLM override in consensus mode.
+  # If missing/invalid, guardian falls back to the main llm settings.
+  # consensus_guardian_provider: "gemini"
+  # consensus_guardian_model: "gemini-3-flash"
+  # consensus_guardian_api_key: ""
+  # consensus_guardian_base_url: ""
   
   # Custom regex patterns to block (e.g., additional dangerous commands)
   custom_blacklist_rules: []

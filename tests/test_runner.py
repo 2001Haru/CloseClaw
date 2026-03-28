@@ -27,6 +27,7 @@ from closeclaw.runner import (
     _bootstrap_mcp_servers,
 )
 from closeclaw.channels.cli_channel import CLIChannel
+from closeclaw.middleware import AuthPermissionMiddleware
 from closeclaw.types import ChannelType, Message
 
 
@@ -188,6 +189,70 @@ class TestCreateAgent:
         
         # Should have tools from file_tools, shell_tools, web_tools
         assert len(agent.tools) > 0
+
+    def test_create_agent_uses_guardian_provider_override_in_consensus_mode(self, monkeypatch):
+        """Consensus guardian should use dedicated provider/model when override is valid."""
+        calls = []
+        main_provider_obj = object()
+        guardian_provider_obj = object()
+
+        def _fake_create_llm_provider(**kwargs):
+            calls.append(kwargs)
+            if kwargs.get("model") == "gemini-3-flash":
+                return guardian_provider_obj
+            return main_provider_obj
+
+        monkeypatch.setattr("closeclaw.runner.create_llm_provider", _fake_create_llm_provider)
+
+        config = self._make_config(
+            llm=LLMConfig(provider="gemini", model="gemini-2.5-pro", api_key="main-key"),
+            safety=SafetyConfig(
+                admin_user_ids=["admin1"],
+                security_mode="consensus",
+                consensus_guardian_provider="gemini",
+                consensus_guardian_model="gemini-3-flash",
+            ),
+        )
+
+        agent = create_agent(config)
+        auth_middleware = next(
+            (m for m in agent.middleware_chain.middlewares if isinstance(m, AuthPermissionMiddleware)),
+            None,
+        )
+        assert auth_middleware is not None
+        assert auth_middleware.consensus_guardian is not None
+        assert auth_middleware.consensus_guardian._llm_provider is guardian_provider_obj
+        assert len(calls) >= 2
+
+    def test_create_agent_falls_back_when_guardian_provider_override_invalid(self, monkeypatch):
+        """Invalid guardian override should fall back to main provider."""
+        main_provider_obj = object()
+
+        def _fake_create_llm_provider(**kwargs):
+            if kwargs.get("model") == "broken-guardian-model":
+                raise RuntimeError("invalid guardian model")
+            return main_provider_obj
+
+        monkeypatch.setattr("closeclaw.runner.create_llm_provider", _fake_create_llm_provider)
+
+        config = self._make_config(
+            llm=LLMConfig(provider="openai", model="gpt-4", api_key="main-key"),
+            safety=SafetyConfig(
+                admin_user_ids=["admin1"],
+                security_mode="consensus",
+                consensus_guardian_provider="gemini",
+                consensus_guardian_model="broken-guardian-model",
+            ),
+        )
+
+        agent = create_agent(config)
+        auth_middleware = next(
+            (m for m in agent.middleware_chain.middlewares if isinstance(m, AuthPermissionMiddleware)),
+            None,
+        )
+        assert auth_middleware is not None
+        assert auth_middleware.consensus_guardian is not None
+        assert auth_middleware.consensus_guardian._llm_provider is main_provider_obj
 
 
 # ====== Placeholder LLM ======

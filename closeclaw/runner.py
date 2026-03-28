@@ -47,6 +47,41 @@ logger = logging.getLogger(__name__)
 RunMode = Literal["all", "agent", "gateway"]
 
 
+def _create_guardian_llm_provider(config: CloseCrawlConfig, main_llm_provider: Any) -> Any:
+    """Create guardian-specific provider with graceful fallback to main provider."""
+    safety = config.safety
+    provider = (safety.consensus_guardian_provider or "").strip()
+    model = (safety.consensus_guardian_model or "").strip()
+
+    if not provider or not model:
+        return main_llm_provider
+
+    try:
+        guardian_provider = create_llm_provider(
+            provider=provider,
+            model=model,
+            api_key=safety.consensus_guardian_api_key if safety.consensus_guardian_api_key is not None else (config.llm.api_key or ""),
+            base_url=safety.consensus_guardian_base_url if safety.consensus_guardian_base_url is not None else (config.llm.base_url or ""),
+            temperature=0.0,
+            max_tokens=config.llm.max_tokens,
+            timeout_seconds=config.llm.timeout_seconds,
+        )
+        logger.info(
+            "Consensus guardian provider override enabled: %s/%s",
+            provider,
+            model,
+        )
+        return guardian_provider
+    except Exception as exc:
+        logger.warning(
+            "Consensus guardian provider override is invalid (%s/%s): %s. Falling back to main LLM provider.",
+            provider,
+            model,
+            exc,
+        )
+        return main_llm_provider
+
+
 def _is_channel_allowed_for_mode(channel_type: str, run_mode: RunMode) -> bool:
     """Check whether a channel type is allowed under startup mode."""
     normalized_type = channel_type.lower()
@@ -287,8 +322,9 @@ def create_agent(config: CloseCrawlConfig,
     security_mode = normalize_security_mode(config.safety.security_mode)
     consensus_guardian = None
     if security_mode == SecurityMode.CONSENSUS:
+        guardian_llm_provider = _create_guardian_llm_provider(config, llm_provider)
         consensus_guardian = ConsensusGuardian(
-            llm_provider=llm_provider,
+            llm_provider=guardian_llm_provider,
             prompt=config.safety.consensus_guardian_prompt,
             timeout_seconds=config.safety.consensus_guardian_timeout_seconds,
         )
@@ -409,13 +445,22 @@ async def run_channel(agent: AgentCore,
         
         async def output_fn(response: dict[str, Any]) -> None:
             """Inject platform-specific metadata into response before sending."""
+            enriched_response = dict(response or {})
+
             # Inject _chat_id from last received message
-            if "_chat_id" not in response and "_chat_id" in last_message_metadata:
+            if "_chat_id" not in enriched_response and "_chat_id" in last_message_metadata:
                 candidate_chat_id = last_message_metadata["_chat_id"]
                 if candidate_chat_id not in {None, "", "direct"}:
-                    response["_chat_id"] = candidate_chat_id
+                    enriched_response["_chat_id"] = candidate_chat_id
+
+            current_tokens = int(getattr(agent.context_manager, "token_count", 0) or 0)
+            max_window_tokens = int(getattr(agent.context_manager, "max_tokens", 0) or 0)
+            ratio = (current_tokens / max_window_tokens) if max_window_tokens > 0 else 0.0
+            enriched_response["_token_usage_prefix"] = (
+                f"[TOKENS] {current_tokens}/{max_window_tokens} ({ratio:.2%})"
+            )
             try:
-                await channel.send_response(response)
+                await channel.send_response(enriched_response)
             except Exception as exc:
                 # Output transport errors should not terminate the whole agent loop.
                 logger.exception(

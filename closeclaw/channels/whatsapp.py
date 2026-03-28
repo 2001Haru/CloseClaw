@@ -87,6 +87,7 @@ class WhatsAppChannel(BaseChannel):
             return
 
         resp_type = response.get("type", "response")
+        token_prefix = str(response.get("_token_usage_prefix", "") or "").strip()
         text = ""
 
         if resp_type in {"response", "assistant_message"}:
@@ -120,6 +121,8 @@ class WhatsAppChannel(BaseChannel):
         else:
             text = str(response)
 
+        if resp_type in {"response", "assistant_message"} and token_prefix:
+            text = f"{token_prefix}\n{text}"
         await self._bridge_send(
             {
                 "type": "send",

@@ -120,6 +120,7 @@ class QQChannel(BaseChannel):
             return
 
         resp_type = response.get("type", "response")
+        token_prefix = str(response.get("_token_usage_prefix", "") or "").strip()
         if resp_type in {"response", "assistant_message"}:
             text = response.get("response", "") or "OK"
         elif resp_type == "auth_request":
@@ -150,6 +151,8 @@ class QQChannel(BaseChannel):
         else:
             text = str(response)
 
+        if resp_type in {"response", "assistant_message"} and token_prefix:
+            text = f"{token_prefix}\n{text}"
         self._msg_seq += 1
         msg_id = response.get("message_id") or str(self._msg_seq)
         chat_type = self._chat_type_cache.get(chat_id, "c2c")

@@ -50,11 +50,21 @@ class ConsensusGuardian:
                 ),
                 timeout=self._timeout_seconds,
             )
+        except asyncio.TimeoutError:
+            return GuardianDecision(
+                approved=False,
+                reason_code="GUARDIAN_TIMEOUT",
+                comment=(
+                    f"Sentinel review timed out after {self._timeout_seconds:.1f}s "
+                    "(policy fail-close in consensus mode)."
+                ),
+            )
         except Exception as exc:
+            detail = str(exc).strip() or repr(exc)
             return GuardianDecision(
                 approved=False,
                 reason_code="GUARDIAN_ERROR",
-                comment=f"Sentinel unavailable: {exc}",
+                comment=f"Sentinel error ({exc.__class__.__name__}): {detail}",
             )
 
         decision = self._parse_decision(text or "")

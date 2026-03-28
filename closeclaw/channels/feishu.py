@@ -141,12 +141,13 @@ class FeishuChannel(BaseChannel):
         """Send response back to user via Feishu."""
         resp_type = response.get("type", "response")
         chat_id = response.get("_chat_id")
+        token_prefix = str(response.get("_token_usage_prefix", "") or "").strip()
         
         if not chat_id:
             logger.warning("Cannot send response: no chat_id")
             return
-        
-        if resp_type == "response":
+
+        if resp_type in {"response", "assistant_message"}:
             text = response.get("response", "OK")
             tool_results = response.get("tool_results", [])
             lines: list[str] = [text]
@@ -161,6 +162,8 @@ class FeishuChannel(BaseChannel):
                         lines.append(f"[GUARDIAN] {decision}")
 
             text = "\n".join(lines)
+            if token_prefix:
+                text = f"{token_prefix}\n{text}"
             await self._send_text_message(chat_id, text)
         
         elif resp_type == "auth_request":

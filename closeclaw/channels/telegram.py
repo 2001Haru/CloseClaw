@@ -159,6 +159,7 @@ class TelegramChannel(BaseChannel):
         """
         resp_type = response.get("type", "response")
         chat_id = response.get("_chat_id")
+        token_prefix = str(response.get("_token_usage_prefix", "") or "").strip()
         
         if not chat_id or not self._app:
             logger.warning("Cannot send response: no chat_id or app not initialized")
@@ -295,6 +296,8 @@ class TelegramChannel(BaseChannel):
                 parts.append(text)
             
             full_text = "\n".join(parts) if parts else "OK"
+            if token_prefix:
+                full_text = f"{token_prefix}\n{full_text}"
             await safe_send(full_text)
             
         elif resp_type == "auth_request":

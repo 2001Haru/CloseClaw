@@ -164,6 +164,12 @@ class CLIChannel(BaseChannel):
         - "error": Error message
         """
         resp_type = response.get("type", "response")
+        token_prefix = str(response.get("_token_usage_prefix", "") or "").strip()
+
+        def _prepend_token_prefix(text: str) -> str:
+            if not token_prefix:
+                return text
+            return f"{token_prefix}\n{text}" if text else token_prefix
         
         if resp_type in {"response", "assistant_message"}:
             text = response.get("response", "")
@@ -190,6 +196,8 @@ class CLIChannel(BaseChannel):
                             print(f"  {Colors.DIM}[GUARDIAN] {decision}{Colors.RESET}")
             
             # Show main response
+            if token_prefix:
+                print(f"{Colors.DIM}{token_prefix}{Colors.RESET}")
             print(f"{Colors.GREEN}Agent > {Colors.RESET}{text}\n")
             self._input_gate.set()
         
