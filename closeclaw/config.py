@@ -66,6 +66,9 @@ class SafetyConfig:
     command_blacklist_enabled: bool = True
     command_policy_profile: str = "balanced"
     custom_blacklist_rules: list[str] = field(default_factory=list)
+    os_sandbox_enabled: bool = True
+    os_sandbox_fail_closed: bool = False
+    os_sandbox_protected_tools: list[str] = field(default_factory=lambda: ["shell"])
     # Backward-compatible alias for older tests/configs.
     enable_audit_log: bool = True
     audit_log_enabled: bool = True
@@ -83,6 +86,9 @@ class SafetyConfig:
             "command_blacklist_enabled": self.command_blacklist_enabled,
             "command_policy_profile": self.command_policy_profile,
             "custom_blacklist_rules": self.custom_blacklist_rules,
+            "os_sandbox_enabled": self.os_sandbox_enabled,
+            "os_sandbox_fail_closed": self.os_sandbox_fail_closed,
+            "os_sandbox_protected_tools": self.os_sandbox_protected_tools,
             "enable_audit_log": self.enable_audit_log,
             "audit_log_enabled": self.audit_log_enabled,
             "audit_log_path": self.audit_log_path,
@@ -480,6 +486,13 @@ class ConfigLoader:
             command_blacklist_enabled=safety_raw.get("command_blacklist_enabled", True),
             command_policy_profile=str(safety_raw.get("command_policy_profile", "balanced")),
             custom_blacklist_rules=safety_raw.get("custom_blacklist_rules", []),
+            os_sandbox_enabled=bool(safety_raw.get("os_sandbox_enabled", True)),
+            os_sandbox_fail_closed=bool(safety_raw.get("os_sandbox_fail_closed", False)),
+            os_sandbox_protected_tools=[
+                str(name).strip()
+                for name in safety_raw.get("os_sandbox_protected_tools", ["shell"])
+                if str(name).strip()
+            ],
             enable_audit_log=enable_audit_log,
             audit_log_enabled=enable_audit_log,
             audit_log_path=safety_raw.get("audit_log_path", DEFAULT_AUDIT_LOG_REL),
@@ -663,6 +676,10 @@ safety:
   
   # Custom regex patterns to block (e.g., additional dangerous commands)
   custom_blacklist_rules: []
+  # OS-level sandbox execution for selected tools
+  os_sandbox_enabled: true
+  os_sandbox_fail_closed: false
+  os_sandbox_protected_tools: ["shell"]
   
   # Audit logging
   audit_log_enabled: true

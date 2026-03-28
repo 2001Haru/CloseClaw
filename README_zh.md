@@ -50,16 +50,23 @@
 - 在 `consensus` 模式下，Guardian Agent 会优先自动审查敏感调用。
 - 在保持严格控制的同时，显著降低持续人工审批负担。
 
-### 🧱 本地防线依然重要
+### 🧱 坚实的本地防线
 - `PathSandbox` 在 `workspace_root` 内提供本地硬边界。
 - 在工具执行前拦截路径穿越和越界写入。
 
+
+### 🪟 OS 级超轻量沙盒
+- 对受保护工具（默认：`shell`）启用 OS 级受限执行（restricted token + low integrity + job object 约束）。
+- 即使 prompt 层或 Guardian 出现误判，也有系统权限边界兜底。
+- 默认保持轻量：仅 `os_sandbox_protected_tools` 名单内工具承担隔离开销；低风险工具（如 `read_file`）继续走快速路径。
+- 支持失败闭锁：`os_sandbox_fail_closed: true` 时，沙盒后端不可用将直接阻断执行。
 
 ```text
 Tool Call
   -> SafetyGuard
   -> PathSandbox
-  -> Guardian/Auth (支持 Consensus)
+  -> Guardian/Auth 
+  -> OS-Level Sandbox
   -> Execute
 ```
 

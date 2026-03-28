@@ -3,6 +3,7 @@
 import pytest
 import os
 import time
+import tempfile
 from pathlib import Path
 
 from closeclaw.tools.base import get_registered_tools
@@ -254,6 +255,59 @@ class TestShellTools:
         result = await shell_impl("echo test_output")
         assert result.get("executed") is True
         assert "test_output" in result.get("stdout", "")
+
+    @pytest.mark.asyncio
+    async def test_shell_uses_os_sandbox_when_tool_is_protected(self, monkeypatch):
+        from closeclaw.tools import shell_tools
+
+        class _FakeExecutor:
+            async def run_shell(self, **kwargs):
+                return {
+                    "returncode": 0,
+                    "stdout": "sandboxed",
+                    "stderr": "",
+                    "executed": True,
+                    "sandbox_backend": "fake",
+                }
+
+        monkeypatch.setattr(shell_tools.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(shell_tools, "get_os_sandbox_executor", lambda: _FakeExecutor())
+        shell_tools.configure_shell_sandbox(
+            workspace_root=tempfile.gettempdir(),
+            os_sandbox_enabled=True,
+            os_sandbox_protected_tools=["shell"],
+        )
+
+        result = await shell_tools.shell_impl("echo hi")
+        assert result.get("sandbox_backend") == "fake"
+        assert result.get("stdout") == "sandboxed"
+
+    @pytest.mark.asyncio
+    async def test_shell_skips_os_sandbox_when_tool_not_protected(self, monkeypatch):
+        from closeclaw.tools import shell_tools
+
+        class _FakeExecutor:
+            async def run_shell(self, **kwargs):
+                return {
+                    "returncode": 0,
+                    "stdout": "should_not_be_used",
+                    "stderr": "",
+                    "executed": True,
+                    "sandbox_backend": "fake",
+                }
+
+        monkeypatch.setattr(shell_tools.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(shell_tools, "get_os_sandbox_executor", lambda: _FakeExecutor())
+        shell_tools.configure_shell_sandbox(
+            workspace_root=tempfile.gettempdir(),
+            os_sandbox_enabled=True,
+            os_sandbox_protected_tools=["delete_file"],
+        )
+
+        result = await shell_tools.shell_impl("echo direct")
+        assert result.get("executed") is True
+        assert "direct" in result.get("stdout", "")
+        assert result.get("sandbox_backend") != "fake"
 
 
 class TestWebTools:

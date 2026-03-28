@@ -525,7 +525,7 @@ class AuthPermissionMiddleware(Middleware):
         if not requires_auth:
             return {"status": "allow"}
 
-        if bool(arguments.get("_force_execute")):
+        if bool(kwargs.get("auth_replay_approved")):
             return {
                 "status": "allow",
                 "auth_mode": self.security_mode.value,

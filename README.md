@@ -50,16 +50,21 @@
 - In `consensus` mode, Guardian Agent can auto-review sensitive calls first.
 - Reduces constant approval fatigue while preserving strict control.
 
-### 🧱 Local Foundation Still Matters
+### 🧱 Solid Local Foundation 
 - `PathSandbox` enforces hard local boundaries inside `workspace_root`.
 - Blocks path traversal and out-of-workspace writes before tool execution.
 
+### 🪟 OS-Level Lightweight Sandbox 
+- `Restricted Token`, `Low Integrity and Job-Object constraints` enforce OS-level restricted execution for protected tools (default: `shell`).
+- Higly customizable: only tools in `os_sandbox_protected_tools` pay the isolation cost; low-risk tools (e.g. `read_file`) stay fast.
+- Fail-safe option supported: `os_sandbox_fail_closed: true` blocks execution when sandbox backend is unavailable.
 
 ```text
 Tool Call
-  -> SafetyGuard
-  -> PathSandbox
-  -> Guardian/Auth (Consensus-capable)
+  -> SafetyGuard 
+  -> PathSandbox 
+  -> Guardian/Auth 
+  -> OS-Level Sandbox
   -> Execute
 ```
 

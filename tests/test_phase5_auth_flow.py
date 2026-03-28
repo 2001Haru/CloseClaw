@@ -138,8 +138,8 @@ class AuthThenSynthesizeContextLLM:
 class SelectiveAuthMiddleware:
     """Require auth for write_file and allow everything else."""
 
-    async def check_permission(self, tool, arguments, session, user_id):
-        if tool.name == "write_file" and not arguments.get("_force_execute"):
+    async def check_permission(self, tool, arguments, session, user_id, **kwargs):
+        if tool.name == "write_file" and not kwargs.get("auth_replay_approved", False):
             auth_id = f"auth_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
             return {
                 "status": "requires_auth",

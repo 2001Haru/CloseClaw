@@ -400,9 +400,6 @@ class AgentCore:
             }
 
         pending_auth = {**pending_auth}
-        pending_args = pending_auth.get("arguments")
-        if isinstance(pending_args, dict):
-            pending_args["_force_execute"] = True
 
         try:
             result = await self.tool_execution_service.execute_authorized_request(pending_auth)

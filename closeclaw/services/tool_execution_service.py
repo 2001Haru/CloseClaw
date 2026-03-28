@@ -60,12 +60,22 @@ class ToolExecutionService:
             return tool
         return NativeAdapter.to_toolspec_v2(tool)
 
-    async def execute_tool_call(self, tool_call: ToolCall) -> ToolResult:
+    async def execute_tool_call(self, tool_call: ToolCall, *, auth_replay_approved: bool = False) -> ToolResult:
         """Execute tool call through unified policy and adaptation pipeline."""
         tool = self._tools.get(tool_call.name)
         external_spec = self._external_specs.get(tool_call.name)
         is_external = tool is None and external_spec is not None
         permission_context: dict[str, Any] = {}
+        incoming_args = dict(tool_call.arguments) if isinstance(tool_call.arguments, dict) else {}
+        caller_force_execute = bool(incoming_args.get("_force_execute"))
+
+        if caller_force_execute and not auth_replay_approved:
+            return ToolResult(
+                tool_call_id=tool_call.tool_id,
+                status="blocked",
+                result=None,
+                error="Reserved argument '_force_execute' is not allowed in external tool calls",
+            )
 
         if not tool and not external_spec:
             return ToolResult(
@@ -77,6 +87,11 @@ class ToolExecutionService:
 
         spec = external_spec if external_spec else self.normalize_to_v2(tool)
         permission_tool = tool if tool else self._build_permission_tool_from_spec(spec)
+        permission_arguments = dict(incoming_args)
+        permission_arguments.pop("_force_execute", None)
+        if auth_replay_approved:
+            # Compatibility marker for middlewares that rely on this field in arguments.
+            permission_arguments["_force_execute"] = True
 
         session = self._session_getter()
         user_id = session.user_id if session else None
@@ -85,15 +100,16 @@ class ToolExecutionService:
             check_permission = self._middleware_chain.check_permission
             base_kwargs: dict[str, Any] = {
                 "tool": permission_tool,
-                "arguments": tool_call.arguments,
+                "arguments": permission_arguments,
                 "session": session,
                 "user_id": user_id,
             }
             extra_kwargs: dict[str, Any] = {
-                "raw_arguments": copy.deepcopy(tool_call.arguments),
+                "raw_arguments": copy.deepcopy(permission_arguments),
                 "tool_source": spec.source,
                 "tool_source_ref": spec.source_ref,
                 "tool_type": spec.tool_type,
+                "auth_replay_approved": auth_replay_approved,
             }
 
             supports_var_kwargs = False
@@ -150,7 +166,7 @@ class ToolExecutionService:
                     "guardian_comment": auth_result.get("guardian_comment"),
                 }
 
-        execution_args = dict(tool_call.arguments) if isinstance(tool_call.arguments, dict) else {}
+        execution_args = dict(permission_arguments)
         execution_args.pop("_force_execute", None)
         sanitized_call = ToolCall(
             tool_id=tool_call.tool_id,
@@ -190,13 +206,13 @@ class ToolExecutionService:
 
         raw_args = auth_payload.get("arguments", {})
         arguments = dict(raw_args) if isinstance(raw_args, dict) else {}
-        arguments["_force_execute"] = True
+        arguments.pop("_force_execute", None)
         replay_call = ToolCall(
             tool_id=f"auth_replay_{int(time.time() * 1000)}",
             name=str(tool_name),
             arguments=arguments,
         )
-        replay_result = await self.execute_tool_call(replay_call)
+        replay_result = await self.execute_tool_call(replay_call, auth_replay_approved=True)
 
         if replay_result.status in {"success", "task_created"}:
             return replay_result.result

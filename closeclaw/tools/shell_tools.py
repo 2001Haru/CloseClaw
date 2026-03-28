@@ -9,18 +9,41 @@ import logging
 from typing import Any, Optional
 import platform
 import os
+import tempfile
 
 from .base import tool
 from ..types import ToolType
+from ..sandbox import get_os_sandbox_executor
 
 logger = logging.getLogger(__name__)
 
 _shell_workspace_root: Optional[str] = None
+_os_sandbox_enabled: bool = True
+_os_sandbox_fail_closed: bool = False
+_os_sandbox_protected_tools: set[str] = {"shell"}
 
-def configure_shell_sandbox(*, workspace_root: str) -> None:
+def configure_shell_sandbox(
+    *,
+    workspace_root: str,
+    os_sandbox_enabled: bool = True,
+    os_sandbox_fail_closed: bool = False,
+    os_sandbox_protected_tools: Optional[list[str]] = None,
+) -> None:
     """Configure runtime shell sandbox boundaries."""
-    global _shell_workspace_root
+    global _shell_workspace_root, _os_sandbox_enabled, _os_sandbox_fail_closed, _os_sandbox_protected_tools
     _shell_workspace_root = workspace_root
+    _os_sandbox_enabled = bool(os_sandbox_enabled)
+    _os_sandbox_fail_closed = bool(os_sandbox_fail_closed)
+    normalized = {str(name).strip().lower() for name in (os_sandbox_protected_tools or ["shell"]) if str(name).strip()}
+    _os_sandbox_protected_tools = normalized or {"shell"}
+
+
+def _should_use_os_sandbox(*, tool_name: str) -> bool:
+    if not _os_sandbox_enabled:
+        return False
+    if platform.system().lower() != "windows":
+        return False
+    return tool_name.strip().lower() in _os_sandbox_protected_tools
 
 
 @tool(
@@ -59,6 +82,10 @@ async def shell_impl(command: str, timeout: int = 30) -> dict[str, Any]:
         
         # Prepare sandbox environment
         cwd = _shell_workspace_root if _shell_workspace_root else None
+        if cwd is None and os.name == "nt":
+            temp_cwd = tempfile.gettempdir()
+            if temp_cwd:
+                cwd = temp_cwd
         
         # Strip sensitive environment variables
         safe_env = {}
@@ -67,7 +94,19 @@ async def shell_impl(command: str, timeout: int = 30) -> dict[str, Any]:
             if not (k_upper.endswith("_KEY") or k_upper.endswith("_TOKEN") or "PASSWORD" in k_upper or "SECRET" in k_upper):
                 safe_env[k] = v
                 
-        # Create async subprocess
+        if _should_use_os_sandbox(tool_name="shell"):
+            executor = get_os_sandbox_executor()
+            restricted_result = await executor.run_shell(
+                command=command,
+                timeout=timeout,
+                cwd=cwd,
+                env=safe_env,
+                fail_closed=_os_sandbox_fail_closed,
+            )
+            if restricted_result is not None:
+                return restricted_result
+
+        # Fallback execution path (or non-protected tool)
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,

@@ -108,6 +108,9 @@ safety:  # Safety, auth, and audit controls.
   command_blacklist_enabled: true  # Enable shell command blacklist checks.
   command_policy_profile: "balanced"  # Shell policy profile: balanced | strict.
   custom_blacklist_rules: []  # Additional regex blacklist rules.
+  os_sandbox_enabled: true  # Enable OS-level restricted execution for protected tools.
+  os_sandbox_fail_closed: true  # If sandbox backend fails: true=block, false=fallback to normal execution.
+  os_sandbox_protected_tools: ["shell"]  # Tool allowlist that must go through OS-level sandbox.
 
   audit_log_enabled: true  # Enable audit log writing.
   audit_log_path: "CloseClaw Memory/audit.log"  # Audit file path (relative to workspace_root or absolute).

@@ -103,6 +103,8 @@ class TestSafetyConfig:
         assert config.enable_hitl is True
         assert config.enable_audit_log is True
         assert config.command_policy_profile == "balanced"
+        assert config.os_sandbox_enabled is True
+        assert config.os_sandbox_protected_tools == ["shell"]
     
     def test_safety_config_custom(self):
         """Test custom safety config."""

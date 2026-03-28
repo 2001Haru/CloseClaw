@@ -312,7 +312,10 @@ def create_agent(config: CloseCrawlConfig,
     )
     
     configure_shell_sandbox(
-        workspace_root=config.workspace_root
+        workspace_root=config.workspace_root,
+        os_sandbox_enabled=config.safety.os_sandbox_enabled,
+        os_sandbox_fail_closed=config.safety.os_sandbox_fail_closed,
+        os_sandbox_protected_tools=config.safety.os_sandbox_protected_tools,
     )
     
     # Register all tools

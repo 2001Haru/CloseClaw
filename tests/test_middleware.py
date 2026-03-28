@@ -648,8 +648,9 @@ class TestAuthPermissionMiddleware:
 
         result = await perms.process(
             tool=tool,
-            arguments={"path": "/data/critical.txt", "_force_execute": True},
+            arguments={"path": "/data/critical.txt"},
             session=sample_session,
+            auth_replay_approved=True,
         )
 
         assert result["status"] == "allow"
