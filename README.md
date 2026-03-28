@@ -37,6 +37,38 @@
 
 ---
 
+## ⚓ Key Features
+
+> [!IMPORTANT]
+> **Guardian Mechanism** Traditional sandboxes mainly protect local files. CloseClaw Guardian Agent also protects connected assets (mailboxes, cloud repos, third-party APIs) and any MCP touchable content.
+
+### 👮 Guardian Monitor Design
+- Guardian Agent reviews actions intelligently and intercepts high-impact connected actions before execution.
+- Keeps MCP/network tools under the same safety policy.
+
+### 🔒 Consensus Mode = Safer Automation
+- In `consensus` mode, Guardian Agent can auto-review sensitive calls first.
+- Reduces constant approval fatigue while preserving strict control.
+
+### 🧱 Local Foundation Still Matters
+- `PathSandbox` enforces hard local boundaries inside `workspace_root`.
+- Blocks path traversal and out-of-workspace writes before tool execution.
+
+
+```text
+Tool Call
+  -> SafetyGuard
+  -> PathSandbox
+  -> Guardian/Auth (Consensus-capable)
+  -> Execute
+```
+
+---
+
+## 📷 Preview
+
+---
+
 ## 🎯 Run Modes
 
 | Mode | What runs | Typical usage |
@@ -142,7 +174,7 @@ closeclaw gateway --config config.yaml
 
 ## 🐳 Docker (Optional)
 
-Docker support is optional. Native Windows/Linux usage remains first-class. Please ensure that you have launched your docker engine before the following steps, and check your docker proxies to avoid network problems.
+Docker support is optional. Native Windows/Linux usage remains first-class. Please ensure that you have installed and launched your docker engine before the following steps, and check your docker proxies to avoid network problems.
 
 
 
@@ -565,3 +597,5 @@ Thanks for helping improve CloseClaw.
 <p align="center">
   <b>CloseClaw: Small runtime, strong guardrails, serious automation.</b>
 </p>
+
+

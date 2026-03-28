@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="assets/logo.png" alt="CloseClaw Logo" width="1200">
 </p>
 
@@ -34,6 +34,38 @@
 
 - ### 🔌 **MCP 可扩展**
 - 原生支持 MCP 扩展，兼容 OpenClaw 生态技能与工具，便于快速武装 Agent 能力。
+
+---
+
+## ⚓ 主要特征
+
+> [!IMPORTANT]
+> **Guardian 机制** 传统沙盒主要保护本地文件；CloseClaw 的 Guardian Agent 还会保护联网资产（邮箱、云端代码仓库、第三方 API）以及所有 MCP 可触达内容。
+
+### 👮 Guardian 监护式设计
+- Guardian Agent 智能审核并且在执行前拦截高影响的联网操作。
+- MCP/网络工具统一纳入同一安全策略。
+
+### 🔒 Consensus 模式 = 更安全的自动化
+- 在 `consensus` 模式下，Guardian Agent 会优先自动审查敏感调用。
+- 在保持严格控制的同时，显著降低持续人工审批负担。
+
+### 🧱 本地防线依然重要
+- `PathSandbox` 在 `workspace_root` 内提供本地硬边界。
+- 在工具执行前拦截路径穿越和越界写入。
+
+
+```text
+Tool Call
+  -> SafetyGuard
+  -> PathSandbox
+  -> Guardian/Auth (支持 Consensus)
+  -> Execute
+```
+
+---
+
+## 📷 效果预览
 
 ---
 
@@ -574,3 +606,6 @@ python -m pytest tests -q
 <p align="center">
   <b>CloseClaw：小而强，严谨防护，面向真实自动化。</b>
 </p>
+
+
+
