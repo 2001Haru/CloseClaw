@@ -21,6 +21,25 @@
 
 ---
 
+## 📷 Preview
+
+<p align="center">
+  <table>
+    <tr>
+      <td align="center" width="33%"><strong> 📚 Professional Learning Helper</td>
+      <td align="center" width="33%"><strong> ⏰ 24/7 Non-Stop News Collcetor</td>
+      <td align="center" width="33%"><strong> 🔜 On Call Personal Life Assistant</td>
+    </tr>
+    <tr>
+      <td align="center"><img src="assets/preview-1.png" alt="Professional Learning Helper" width="100%"></td>
+      <td align="center"><img src="assets/preview-2.png" alt="24/7 Online News Collcetor" width="100%"></td>
+      <td align="center"><img src="assets/preview-3.png" alt="Personal Life Assistant" width="100%"></td>
+    </tr>
+  </table>
+</p>
+
+---
+
 # ✨ Why CloseClaw
 
 - ### ⚡ **Fast to deploy**
@@ -67,25 +86,6 @@ Tool Call
   -> OS-Level Sandbox
   -> Execute
 ```
-
----
-
-## 📷 Preview
-
-<p align="center">
-  <table>
-    <tr>
-      <td align="center" width="33%"><strong> 📚 Professional Learning Helper</td>
-      <td align="center" width="33%"><strong> ⏰ 24/7 Non-Stop News Collcetor</td>
-      <td align="center" width="33%"><strong> 🔜 On Call Personal Life Assistant</td>
-    </tr>
-    <tr>
-      <td align="center"><img src="assets/preview-1.png" alt="Professional Learning Helper" width="100%"></td>
-      <td align="center"><img src="assets/preview-2.png" alt="24/7 Online News Collcetor" width="100%"></td>
-      <td align="center"><img src="assets/preview-3.png" alt="Personal Life Assistant" width="100%"></td>
-    </tr>
-  </table>
-</p>
 
 ---
 
