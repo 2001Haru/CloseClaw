@@ -188,9 +188,11 @@ closeclaw gateway --config config.yaml
 
 ## 🐳 Docker (Optional)
 
-Docker support is optional. Native Windows/Linux usage remains first-class. Please ensure that you have installed and launched your docker engine before the following steps, and check your docker proxies to avoid network problems.
+Docker support is optional. If you want a reproducible runtime and easier deployment handoff, use this section.
 
-### 1) Prepare host files
+### 1) One-time prep (copy/paste)
+
+macOS/Linux:
 
 ```bash
 cp .env.example .env
@@ -198,70 +200,87 @@ cp config.example.yaml config.yaml
 mkdir -p workspace runtime-data
 ```
 
-### 2) Build image
+Windows PowerShell:
 
-```bash
-docker build -t closeclaw:local .
+```powershell
+Copy-Item .env.example .env
+Copy-Item config.example.yaml config.yaml
+New-Item -ItemType Directory -Force -Path workspace, runtime-data
 ```
 
-Install optional extras at build time:
+### 2) Minimal required config check
 
-```bash
-docker build --build-arg INSTALL_EXTRAS="[providers,telegram,discord,whatsapp,qq]" -t closeclaw:local .
-```
+In `config.yaml`, make sure:
 
-### 3) Run with docker run
+- `workspace_root: "/workspace"` (important for Linux containers)
+- At least one channel is enabled for your target mode:
+  - `agent` mode: `cli` can be enabled
+  - `gateway` mode: at least one non-CLI channel must be enabled
+- Your provider/channel dependencies are included in `.env` `INSTALL_EXTRAS`
+  - Example for Telegram gateway: `INSTALL_EXTRAS=[providers,telegram]`
 
-Agent mode:
-
-```bash
-docker run --rm -it \
-  -v ${PWD}/config.yaml:/app/config.yaml:ro \
-  -v ${PWD}/workspace:/workspace \
-  -v ${PWD}/runtime-data:/runtime-data \
-  closeclaw:local agent --config /app/config.yaml
-```
-
-Gateway mode:
-
-```bash
-docker run -d --name closeclaw-gateway \
-  -v ${PWD}/config.yaml:/app/config.yaml:ro \
-  -v ${PWD}/workspace:/workspace \
-  -v ${PWD}/runtime-data:/runtime-data \
-  -p 9000:9000 \
-  closeclaw:local gateway --config /app/config.yaml
-```
-
-### 4) Run with docker compose
+### 3) Build and start (docker compose recommended)
 
 ```bash
 docker compose build
 docker compose up -d closeclaw-gateway
+docker compose ps
 docker compose logs -f closeclaw-gateway
-docker compose run --rm closeclaw-cli agent --config /app/config.yaml
+```
+
+### 4) Health verification (important)
+
+Gateway container health:
+
+```bash
+docker compose exec closeclaw-gateway closeclaw runtime-health --config /app/config.yaml --mode gateway --json
+```
+
+CLI profile health:
+
+```bash
+docker compose run --rm closeclaw-cli runtime-health --config /app/config.yaml --mode agent --json
+```
+
+Expected result:
+
+- Exit code `0`
+- JSON contains `"healthy": true`
+
+### 5) Common mistakes (quick fix)
+
+- `workspace_root does not exist: /app/D:`
+  - Cause: Windows path in `config.yaml` inside Linux container.
+  - Fix: set `workspace_root: "/workspace"`.
+- `No channels enabled for mode=gateway`
+  - Cause: only CLI enabled while running gateway mode.
+  - Fix: enable at least one non-CLI channel.
+- `python-telegram-bot is required`
+  - Cause: channel dependency not installed in image.
+  - Fix: set `.env` `INSTALL_EXTRAS=[providers,telegram]`, then rebuild.
+- `docker compose run --rm closeclaw-cli closeclaw ...` fails
+  - Cause: duplicated `closeclaw` command.
+  - Fix: use `docker compose run --rm closeclaw-cli runtime-health ...`.
+
+### 6) Stop and cleanup
+
+```bash
 docker compose down
 ```
 
-### 5) Persistence and secret management
+### 7) Optional smoke test script
 
-- `./workspace` maps to `/workspace` for your actual working files.
-- `./runtime-data` keeps runtime state/memory across container restarts.
-- `./config.yaml` is mounted read-only to `/app/config.yaml`.
-- Secrets should go to `.env` and be referenced by `${ENV_VAR}` in config.
-- In-container shell/file tools operate inside container namespace; bind-mount host paths you want tools to access.
+Run with Bash:
 
-### 6) Troubleshooting Docker path and permissions
+```bash
+bash tests/test_docker.sh
+```
 
-- Permission denied writing runtime files:
-  - Ensure host folders exist before first run (`workspace`, `runtime-data`).
-  - Check host ownership and write permissions for mounted directories.
-- Wrong workspace path behavior:
-  - Set `WORKSPACE_ROOT: /workspace` in compose environment.
-  - Keep `workspace_root` in config aligned with mounted path strategy.
-- Healthcheck stays unhealthy:
-  - Verify `config.yaml` exists and parses.
-  - Verify required provider/channel dependencies are included in `INSTALL_EXTRAS`.
+On PowerShell, call Bash explicitly:
+
+```powershell
+bash tests/test_docker.sh
+```
 
 Operational hardening details are documented in [docs/Docker_Runbook.md](docs/Docker_Runbook.md).
 

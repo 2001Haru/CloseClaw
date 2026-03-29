@@ -54,11 +54,14 @@ docker compose down
 Current defaults include:
 
 - Non-root runtime user in image (`closeclaw`).
-- Healthcheck on both gateway and cli services.
+- Healthcheck on both gateway and cli services via `runtime-health`.
 - `no-new-privileges` security option.
 - `init: true` to improve signal handling and process reaping.
 - Baseline CPU/memory limits configurable via `.env`.
 - `restart: unless-stopped` for gateway service.
+- `cap_drop: [ALL]` for reduced Linux capability surface.
+- `read_only: true` root filesystem with `tmpfs /tmp`.
+- `pids_limit` and log rotation (`json-file`) defaults.
 
 Recommended operator actions:
 
@@ -70,15 +73,16 @@ Recommended operator actions:
 ## 5. Healthcheck Expectations
 
 - Gateway healthcheck command:
-  - `closeclaw provider --config /app/config.yaml --json`
+  - `closeclaw runtime-health --config /app/config.yaml --mode gateway --json`
 - CLI healthcheck command:
-  - `closeclaw --help`
+  - `closeclaw runtime-health --config /app/config.yaml --mode agent --json`
 
 If health status remains `unhealthy`:
 
 1. Validate `/app/config.yaml` exists and is parseable.
 2. Ensure required extras were installed (`INSTALL_EXTRAS`).
-3. Inspect logs with `docker compose logs closeclaw-gateway`.
+3. Ensure `/workspace` and `/runtime-data` are writable inside container.
+4. Inspect logs with `docker compose logs closeclaw-gateway`.
 
 ## 6. Common Troubleshooting
 

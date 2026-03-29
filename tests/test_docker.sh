@@ -46,13 +46,13 @@ YAML
 echo "[docker-smoke] Verifying entrypoint command path"
 docker run --rm --user "$DOCKER_USER" "$IMAGE_TAG" --help >/dev/null
 
-echo "[docker-smoke] Verifying config bootstrap in agent mode"
+echo "[docker-smoke] Verifying runtime health bootstrap in agent mode"
 docker run --rm \
   --user "$DOCKER_USER" \
   -v "$WORK_DIR/config.yaml:/app/config.yaml:ro" \
   -v "$WORK_DIR/workspace:/workspace" \
   -v "$WORK_DIR/runtime-data:/runtime-data" \
-  "$IMAGE_TAG" provider --config /app/config.yaml --json >/dev/null
+  "$IMAGE_TAG" runtime-health --config /app/config.yaml --mode agent --json >/dev/null
 
 echo "[docker-smoke] Verifying gateway command path (graceful startup summary/no-crash)"
 docker run --rm \

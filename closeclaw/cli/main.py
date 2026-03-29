@@ -13,6 +13,7 @@ from .commands import (
     CLICronManager,
     CLIChannelHealthManager,
     CLIProviderHealthManager,
+    CLIRuntimeHealthManager,
 )
 from ..memory.workspace_layout import DEFAULT_STATE_FILE_REL
 
@@ -292,6 +293,66 @@ def create_parser() -> argparse.ArgumentParser:
         help="Output as JSON",
     )
 
+    # Command: runtime-health - Runtime readiness/liveness checks (docker-friendly)
+    runtime_health_parser = subparsers.add_parser(
+        "runtime-health",
+        help="Show runtime health checks (workspace/provider/channel/mode readiness)",
+    )
+    runtime_health_parser.add_argument(
+        "-c", "--config",
+        type=str,
+        default="config.yaml",
+        help="Path to config.yaml file",
+    )
+    runtime_health_parser.add_argument(
+        "--mode",
+        type=str,
+        default="all",
+        choices=["all", "agent", "gateway"],
+        help="Target startup mode for readiness checks",
+    )
+    runtime_health_parser.add_argument(
+        "--runtime-data-dir",
+        type=str,
+        default="/runtime-data",
+        help="Runtime data directory to verify writable health (default: /runtime-data)",
+    )
+    runtime_health_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
+    # Alias: runtime -> runtime-health
+    runtime_alias_parser = subparsers.add_parser(
+        "runtime",
+        help="Alias of runtime-health",
+    )
+    runtime_alias_parser.add_argument(
+        "-c", "--config",
+        type=str,
+        default="config.yaml",
+        help="Path to config.yaml file",
+    )
+    runtime_alias_parser.add_argument(
+        "--mode",
+        type=str,
+        default="all",
+        choices=["all", "agent", "gateway"],
+        help="Target startup mode for readiness checks",
+    )
+    runtime_alias_parser.add_argument(
+        "--runtime-data-dir",
+        type=str,
+        default="/runtime-data",
+        help="Runtime data directory to verify writable health (default: /runtime-data)",
+    )
+    runtime_alias_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
     # Command: heartbeat-trigger - Trigger one heartbeat tick immediately
     hb_trigger_parser = subparsers.add_parser(
         "heartbeat-trigger",
@@ -453,6 +514,12 @@ async def main():
             snapshot = manager.get_health(provider_name=args.name)
             print(CLIProviderHealthManager.format_health(snapshot, as_json=args.json))
             return 0
+
+        elif args.command in {"runtime-health", "runtime"}:
+            manager = CLIRuntimeHealthManager(config_file=Path(args.config))
+            snapshot = manager.get_health(mode=args.mode, runtime_data_dir=args.runtime_data_dir)
+            print(CLIRuntimeHealthManager.format_health(snapshot, as_json=args.json))
+            return 0 if snapshot.get("healthy") else 1
 
         elif args.command == "heartbeat-trigger":
             hb_manager = CLIHeartbeatManager(config_file=Path(args.config))

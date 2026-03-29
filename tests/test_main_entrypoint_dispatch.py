@@ -55,6 +55,8 @@ def test_dispatches_runner_for_non_cli_subcommands(monkeypatch):
         "channel",
         "provider-health",
         "provider",
+        "runtime-health",
+        "runtime",
         "heartbeat-trigger",
         "heartbeat-status",
         "cron-add",

@@ -176,6 +176,8 @@ class TestConfigLoader:
     def test_env_var_substitution(self, temp_workspace):
         """Test environment variable substitution."""
         config_content = """
+workspace_root: ${WORKSPACE_ROOT}
+
 llm:
   provider: openai
   model: gpt-4
@@ -201,6 +203,8 @@ safety:
         """Test config validation."""
         # Missing required fields
         invalid_config = """
+workspace_root: .
+
 llm:
   provider: openai
 """
@@ -214,6 +218,8 @@ llm:
     def test_merge_configs(self):
         """Test merging configs with defaults."""
         custom_yaml = """
+workspace_root: .
+
 llm:
   provider: anthropic
   model: claude-3-opus
@@ -251,6 +257,8 @@ llm:
     def test_heartbeat_config_defaults_and_overrides(self, temp_workspace):
         """Heartbeat config should load with defaults and custom overrides."""
         config_content = """
+workspace_root: .
+
 llm:
     provider: openai
     model: gpt-4
@@ -286,8 +294,8 @@ heartbeat:
         assert config.heartbeat.routing.target_ttl_s == 600
         assert config.heartbeat.notify.enabled is False
 
-    def test_workspace_root_defaults_to_config_dir_when_missing(self, temp_workspace):
-        """When workspace_root is omitted, use config file directory instead of cwd."""
+    def test_workspace_root_is_required_when_missing(self, temp_workspace):
+        """workspace_root must be explicitly provided (or via env)."""
         config_content = """
 llm:
     provider: openai
@@ -297,13 +305,14 @@ llm:
         config_path.write_text(config_content)
 
         loader = ConfigLoader()
-        config = loader.load(str(config_path))
-
-        assert config.workspace_root == str(Path(temp_workspace).resolve())
+        with pytest.raises(ValueError, match="workspace_root is required"):
+            loader.load(str(config_path))
 
     def test_legacy_state_file_is_upgraded_to_memory_path(self, temp_workspace):
         """Legacy state_file=state.json should be auto-upgraded to CloseClaw Memory path."""
         config_content = """
+workspace_root: .
+
 llm:
   provider: openai
   model: gpt-4
@@ -321,6 +330,8 @@ state_file: state.json
     def test_web_search_brave_config_parses(self, temp_workspace):
         """web_search block should parse Brave API configuration."""
         config_content = """
+workspace_root: .
+
 llm:
     provider: openai
     model: gpt-4
@@ -347,6 +358,8 @@ web_search:
     def test_safety_mode_and_guardian_config_parses(self, temp_workspace):
         """safety block should parse security_mode and consensus guardian settings."""
         config_content = """
+workspace_root: .
+
 llm:
     provider: openai
     model: gpt-4
@@ -375,6 +388,8 @@ safety:
     def test_safety_mode_defaults_to_supervised(self, temp_workspace):
         """When safety mode is omitted, default should remain supervised."""
         config_content = """
+workspace_root: .
+
 llm:
     provider: openai
     model: gpt-4

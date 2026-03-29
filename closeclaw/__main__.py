@@ -24,6 +24,8 @@ CLI_SUBCOMMANDS = {
     "channel",
     "provider-health",
     "provider",
+    "runtime-health",
+    "runtime",
     "heartbeat-trigger",
     "heartbeat-status",
     "cron-add",

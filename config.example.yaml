@@ -1,7 +1,7 @@
 # CloseClaw Configuration Template  # Copy to config.yaml and replace all example values.
 
 agent_id: "closeclaw-main"  # Unique identifier for this running agent instance.
-workspace_root: "/home/user/my_workspace"  # Absolute workspace root. If omitted, loader falls back to config file directory (often repository path).
+workspace_root: "/home/user/my_workspace"  # Absolute workspace root (required).
 
 llm:  # LLM provider settings.
   provider: "openai"  # Provider id: openai, openai-compatible, gemini, anthropic, deepseek, ollama, etc.

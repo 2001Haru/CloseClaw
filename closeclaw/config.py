@@ -354,21 +354,19 @@ class ConfigLoader:
 
     @staticmethod
     def _resolve_workspace_root(raw_config: dict[str, Any], config_path: Optional[str] = None) -> str:
-        """Resolve workspace_root with deterministic precedence.
+        """Resolve workspace_root with explicit-only precedence.
 
         Precedence:
         1) Explicit config.workspace_root
         2) WORKSPACE_ROOT env var
-        3) Directory of config file (safer than process cwd)
         """
         workspace_root = raw_config.get("workspace_root") or os.environ.get("WORKSPACE_ROOT")
         if workspace_root:
             return os.path.abspath(workspace_root)
-
-        if config_path:
-            return os.path.abspath(os.path.dirname(config_path))
-
-        return os.path.abspath(os.getcwd())
+        raise ValueError(
+            "workspace_root is required. Please set `workspace_root` in config.yaml "
+            "or export WORKSPACE_ROOT."
+        )
     
     @staticmethod
     def load(config_path: str) -> CloseCrawlConfig:
@@ -427,12 +425,9 @@ class ConfigLoader:
             if field not in raw_config:
                 raise ValueError(f"Missing required config field: {field}")
 
-        # Keep backward compatibility: only hard-fail when workspace_root is
-        # explicitly provided in config.
-        if "workspace_root" in raw_config:
-            workspace = ConfigLoader._resolve_workspace_root(raw_config, config_path=config_path)
-            if not os.path.exists(workspace):
-                raise ValueError(f"workspace_root does not exist: {workspace}")
+        workspace = ConfigLoader._resolve_workspace_root(raw_config, config_path=config_path)
+        if not os.path.exists(workspace):
+            raise ValueError(f"workspace_root does not exist: {workspace}")
         
         # Validate LLM config
         llm = raw_config.get("llm", {})

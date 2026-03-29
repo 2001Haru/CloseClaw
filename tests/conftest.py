@@ -132,6 +132,8 @@ def sample_tool_result(sample_tool_call) -> ToolResult:
 def config_file(temp_workspace):
     """Create a sample configuration file."""
     config_content = """
+workspace_root: .
+
 llm:
   provider: openai
   model: gpt-4

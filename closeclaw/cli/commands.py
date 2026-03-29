@@ -10,6 +10,7 @@ import asyncio
 import importlib.util
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Optional, Any
 from datetime import datetime, timezone
@@ -704,4 +705,145 @@ class CLIProviderHealthManager:
             return bool(model_ok and api_key), "model+api_key required"
 
         return model_ok, "model required"
+
+
+class CLIRuntimeHealthManager:
+    """CLI manager for runtime readiness/liveness checks (docker-friendly)."""
+
+    def __init__(self, config_file: Path = Path("config.yaml")) -> None:
+        self.config_file = config_file
+
+    def _load_config(self):
+        return ConfigLoader.load(str(self.config_file))
+
+    @staticmethod
+    def _is_channel_allowed_for_mode(channel_type: str, run_mode: str) -> bool:
+        normalized_type = (channel_type or "").strip().lower()
+        normalized_mode = (run_mode or "all").strip().lower()
+        if normalized_mode == "agent":
+            return normalized_type == "cli"
+        if normalized_mode == "gateway":
+            return normalized_type != "cli"
+        return True
+
+    @staticmethod
+    def _check_writable_dir(path_value: str) -> tuple[bool, str]:
+        path = Path(path_value).resolve()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            probe = path / ".closeclaw_health_probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            return True, f"writable: {path}"
+        except Exception as exc:
+            return False, f"not writable: {path} ({exc})"
+
+    def get_health(self, *, mode: str = "all", runtime_data_dir: str = "/runtime-data") -> dict[str, Any]:
+        config = self._load_config()
+        normalized_mode = (mode or "all").strip().lower()
+        if normalized_mode not in {"all", "agent", "gateway"}:
+            normalized_mode = "all"
+
+        checks: list[dict[str, Any]] = []
+
+        # 1) workspace path writable
+        ws_ok, ws_detail = self._check_writable_dir(config.workspace_root)
+        checks.append({"name": "workspace_writable", "ok": ws_ok, "detail": ws_detail})
+
+        # 2) runtime-data writable (strict inside docker, soft outside docker)
+        in_docker = Path("/.dockerenv").exists() or bool(os.environ.get("DOCKER_CONTAINER"))
+        runtime_data = (runtime_data_dir or "").strip()
+        if runtime_data:
+            runtime_path = Path(runtime_data).resolve()
+            if runtime_path.exists():
+                rd_ok, rd_detail = self._check_writable_dir(str(runtime_path))
+                checks.append({"name": "runtime_data_writable", "ok": rd_ok, "detail": rd_detail})
+            else:
+                checks.append(
+                    {
+                        "name": "runtime_data_writable",
+                        "ok": not in_docker,
+                        "detail": f"missing: {runtime_path} (required in docker={in_docker})",
+                    }
+                )
+
+        # 3) provider health (active provider must be healthy)
+        provider_snapshot = CLIProviderHealthManager(config_file=self.config_file).get_health()
+        active_provider = provider_snapshot.get("summary", {}).get("active_provider")
+        active_row = None
+        for row in provider_snapshot.get("providers", []):
+            if row.get("provider") == active_provider:
+                active_row = row
+                break
+        provider_ok = bool(active_row and active_row.get("health") == "healthy")
+        checks.append(
+            {
+                "name": "provider_active_healthy",
+                "ok": provider_ok,
+                "detail": active_row if active_row else "active provider row missing",
+            }
+        )
+
+        # 4) enabled channels in target mode must be healthy
+        channel_snapshot = CLIChannelHealthManager(config_file=self.config_file).get_health()
+        enabled_target_channels = [
+            row
+            for row in channel_snapshot.get("channels", [])
+            if row.get("enabled") and self._is_channel_allowed_for_mode(str(row.get("channel", "")), normalized_mode)
+        ]
+        channels_ok = all(row.get("health") == "healthy" for row in enabled_target_channels)
+        checks.append(
+            {
+                "name": "enabled_channels_healthy",
+                "ok": channels_ok,
+                "detail": [
+                    {
+                        "channel": row.get("channel"),
+                        "health": row.get("health"),
+                        "dependency_detail": row.get("dependency_detail"),
+                        "config_detail": row.get("config_detail"),
+                    }
+                    for row in enabled_target_channels
+                ],
+            }
+        )
+
+        # 5) mode channel readiness guard
+        mode_ready = len(enabled_target_channels) > 0
+        checks.append(
+            {
+                "name": "mode_has_enabled_channels",
+                "ok": mode_ready,
+                "detail": f"mode={normalized_mode}, enabled_channels={len(enabled_target_channels)}",
+            }
+        )
+
+        healthy = all(bool(item.get("ok")) for item in checks)
+        return {
+            "mode": normalized_mode,
+            "healthy": healthy,
+            "checks": checks,
+            "provider": provider_snapshot.get("summary", {}),
+            "channels": {
+                "total_target_enabled": len(enabled_target_channels),
+            },
+        }
+
+    @staticmethod
+    def format_health(snapshot: dict[str, Any], as_json: bool = False) -> str:
+        if as_json:
+            return json.dumps(snapshot, ensure_ascii=False, indent=2)
+
+        rows = [
+            {
+                "check": c.get("name"),
+                "ok": c.get("ok"),
+                "detail": c.get("detail"),
+            }
+            for c in snapshot.get("checks", [])
+        ]
+        if not rows:
+            return "No runtime checks executed."
+        header = f"runtime_mode={snapshot.get('mode')} healthy={snapshot.get('healthy')}"
+        return f"{header}\n{tabulate(rows, headers='keys', tablefmt='grid')}"
 

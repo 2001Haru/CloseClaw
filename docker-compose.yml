@@ -12,6 +12,13 @@ services:
     init: true
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    pids_limit: ${GATEWAY_PIDS_LIMIT:-256}
+    stop_grace_period: ${GATEWAY_STOP_GRACE_PERIOD:-20s}
     env_file:
       - .env
     environment:
@@ -24,13 +31,18 @@ services:
     ports:
       - "${GATEWAY_PORT:-9000}:9000"
     healthcheck:
-      test: ["CMD-SHELL", "closeclaw provider --config /app/config.yaml --json > /dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "closeclaw runtime-health --config /app/config.yaml --mode gateway --json > /dev/null 2>&1 || exit 1"]
       interval: ${HEALTHCHECK_INTERVAL:-30s}
       timeout: ${HEALTHCHECK_TIMEOUT:-5s}
       retries: ${HEALTHCHECK_RETRIES:-3}
       start_period: ${HEALTHCHECK_START_PERIOD:-20s}
     mem_limit: ${GATEWAY_MEM_LIMIT:-1g}
     cpus: ${GATEWAY_CPUS:-1.00}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
 
   closeclaw-cli:
     build:
@@ -46,6 +58,13 @@ services:
     init: true
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    pids_limit: ${CLI_PIDS_LIMIT:-256}
+    stop_grace_period: ${CLI_STOP_GRACE_PERIOD:-20s}
     env_file:
       - .env
     environment:
@@ -56,12 +75,17 @@ services:
       - ./workspace:/workspace
       - ./runtime-data:/runtime-data
     healthcheck:
-      test: ["CMD", "closeclaw", "--help"]
+      test: ["CMD-SHELL", "closeclaw runtime-health --config /app/config.yaml --mode agent --json > /dev/null 2>&1 || exit 1"]
       interval: ${HEALTHCHECK_INTERVAL:-30s}
       timeout: ${HEALTHCHECK_TIMEOUT:-5s}
       retries: ${HEALTHCHECK_RETRIES:-3}
       start_period: ${HEALTHCHECK_START_PERIOD:-20s}
     mem_limit: ${CLI_MEM_LIMIT:-768m}
     cpus: ${CLI_CPUS:-1.00}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: ${DOCKER_LOG_MAX_SIZE:-10m}
+        max-file: ${DOCKER_LOG_MAX_FILE:-3}
     stdin_open: true
     tty: true

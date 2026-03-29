@@ -191,9 +191,11 @@ closeclaw gateway --config config.yaml
 
 ## 🐳 Docker（可选）
 
-Docker 支持是可选路径，不影响原生 Windows/Linux 使用体验。在配置 Docker 之前，确保你已经启动了你的 Docker Engine，并且确保你配置了合适的 Docker 代理以避免网络问题。
+Docker 支持是可选路径。若你希望依赖更可复现、部署更一致，建议按本节执行。
 
-### 1) 准备宿主机文件
+### 1) 一次性准备（直接复制）
+
+macOS/Linux：
 
 ```bash
 cp .env.example .env
@@ -201,70 +203,87 @@ cp config.example.yaml config.yaml
 mkdir -p workspace runtime-data
 ```
 
-### 2) 构建镜像
+Windows PowerShell：
 
-```bash
-docker build -t closeclaw:local .
+```powershell
+Copy-Item .env.example .env
+Copy-Item config.example.yaml config.yaml
+New-Item -ItemType Directory -Force -Path workspace, runtime-data
 ```
 
-构建时安装可选依赖：
+### 2) 最小配置检查
 
-```bash
-docker build --build-arg INSTALL_EXTRAS="[providers,telegram,discord,whatsapp,qq]" -t closeclaw:local .
-```
+请确保 `config.yaml` 满足：
 
-### 3) 使用 docker run
+- `workspace_root: "/workspace"`（Linux 容器必须）
+- 目标模式至少有一个可用通道：
+  - `agent` 模式：可启用 `cli`
+  - `gateway` 模式：必须启用至少一个非 CLI 通道
+- `.env` 的 `INSTALL_EXTRAS` 包含对应依赖
+  - 例如 Telegram 网关：`INSTALL_EXTRAS=[providers,telegram]`
 
-Agent 模式：
-
-```bash
-docker run --rm -it \
-  -v ${PWD}/config.yaml:/app/config.yaml:ro \
-  -v ${PWD}/workspace:/workspace \
-  -v ${PWD}/runtime-data:/runtime-data \
-  closeclaw:local agent --config /app/config.yaml
-```
-
-Gateway 模式：
-
-```bash
-docker run -d --name closeclaw-gateway \
-  -v ${PWD}/config.yaml:/app/config.yaml:ro \
-  -v ${PWD}/workspace:/workspace \
-  -v ${PWD}/runtime-data:/runtime-data \
-  -p 9000:9000 \
-  closeclaw:local gateway --config /app/config.yaml
-```
-
-### 4) 使用 docker compose
+### 3) 构建并启动（推荐 compose）
 
 ```bash
 docker compose build
 docker compose up -d closeclaw-gateway
+docker compose ps
 docker compose logs -f closeclaw-gateway
-docker compose run --rm closeclaw-cli agent --config /app/config.yaml
+```
+
+### 4) 健康检查（重点）
+
+Gateway 容器健康检查：
+
+```bash
+docker compose exec closeclaw-gateway closeclaw runtime-health --config /app/config.yaml --mode gateway --json
+```
+
+CLI profile 健康检查：
+
+```bash
+docker compose run --rm closeclaw-cli runtime-health --config /app/config.yaml --mode agent --json
+```
+
+期望结果：
+
+- 返回码为 `0`
+- JSON 中包含 `"healthy": true`
+
+### 5) 常见报错与修复
+
+- `workspace_root does not exist: /app/D:`
+  - 原因：容器里用了 Windows 路径。
+  - 修复：改为 `workspace_root: "/workspace"`。
+- `No channels enabled for mode=gateway`
+  - 原因：gateway 模式下只启用了 CLI。
+  - 修复：至少启用一个非 CLI 通道。
+- `python-telegram-bot is required`
+  - 原因：镜像未安装 telegram 依赖。
+  - 修复：`.env` 设置 `INSTALL_EXTRAS=[providers,telegram]` 后重建。
+- `docker compose run --rm closeclaw-cli closeclaw ...` 报参数错误
+  - 原因：重复写了 `closeclaw`。
+  - 修复：改为 `docker compose run --rm closeclaw-cli runtime-health ...`。
+
+### 6) 停止与清理
+
+```bash
 docker compose down
 ```
 
-### 5) 持久化与密钥管理
+### 7) 可选：一键 smoke 测试
 
-- `./workspace` 映射到 `/workspace`，用于你的实际工作目录。
-- `./runtime-data` 用于保存运行时状态/记忆，容器重启后不丢失。
-- `./config.yaml` 以只读方式挂载到 `/app/config.yaml`。
-- 密钥建议放在 `.env`，并在配置中通过 `${ENV_VAR}` 引用。
-- 容器内 shell/file 工具运行在容器命名空间中，需要访问宿主文件时请通过 bind mount 显式挂载。
+使用 Bash 运行：
 
-### 6) Docker 常见问题（路径/权限）
+```bash
+bash tests/test_docker.sh
+```
 
-- 运行时目录写入权限不足：
-  - 启动前先创建 `workspace`、`runtime-data` 目录。
-  - 检查宿主机目录所有者与写权限。
-- 工作区路径不符合预期：
-  - compose 环境中保持 `WORKSPACE_ROOT: /workspace`。
-  - 配置内 `workspace_root` 与挂载路径策略保持一致。
-- healthcheck 长期 unhealthy：
-  - 检查 `config.yaml` 是否存在且可解析。
-  - 检查 `INSTALL_EXTRAS` 是否包含所需 provider/channel 依赖。
+在 PowerShell 中请显式调用 Bash：
+
+```powershell
+bash tests/test_docker.sh
+```
 
 生产化建议与硬化细节见 [docs/Docker_Runbook.md](docs/Docker_Runbook.md)。
 
