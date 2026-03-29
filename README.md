@@ -92,26 +92,24 @@ Tool Call
 
 ## 📡 Channel Support
 
-### 🛠️ Supported channels
-- `cli`: 💻 For the purists. Fast, local, and pipe-friendly.
-- `telegram`: ✈️ Your mobile command center. Secure and fast.(Recommended)
-- `feishu / lark`: 🏢 Professional workflow integration for enterprise collaboration.
-- `discord`: 🎮 Community-driven interactions with rich markdown support.
-- `whatsapp` (bridge): 🟢 Reachable on the most locked-down mobile networks.
-- `qq`: 🐧 Direct access to the classic Chinese social ecosystem.
-
-### 🚥 Channel endpoint hints at startup
-- Feishu: prints webhook address (host/port)
-- WhatsApp: prints bridge URL
-- Telegram / Discord / QQ: prints gateway/polling started hints
+| Channel | Positioning | Startup Hint |
+| --- | --- | --- |
+| `cli` | 💻 For the purists. Fast, local, and pipe-friendly | Local interactive terminal |
+| `telegram` | ✈️ Mobile command center. Secure and fast (Recommended) | Polling started |
+| `feishu / lark` | 🏢 Professional workflow integration for collaboration | Prints webhook address (host/port) |
+| `discord` | 🎮 Community-driven interactions with rich markdown support | Gateway started |
+| `whatsapp` (bridge) | 🟢 Reachable on locked-down mobile networks via bridge | Prints bridge URL |
+| `qq` | 🐧 Direct access to the classic Chinese social ecosystem | Gateway started |
 
 ---
 
 ## 🤖 LLM Providers
 
-- `openai` / `openai-compatible` (default-friendly)
-- `gemini` (via LiteLLM runtime)
-- `anthropic` (via LiteLLM runtime)
+| Provider | Runtime Path | Notes |
+| --- | --- | --- |
+| `openai` / `openai-compatible` | Native provider path | Default-friendly, quick setup |
+| `gemini` | LiteLLM runtime | Requires `.[providers]` extra |
+| `anthropic` | LiteLLM runtime | Requires `.[providers]` extra |
 
 ---
 
@@ -179,7 +177,7 @@ Gateway mode:
 closeclaw gateway --config config.yaml
 ```
 
-✨And that's your agent!
+### ✨And that's your agent!
 
 ---
 

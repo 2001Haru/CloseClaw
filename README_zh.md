@@ -94,27 +94,25 @@ Tool Call
 
 ## 📡 通道支持
 
-### 已支持通道
-- `cli`
-- `telegram`
-- `feishu`
-- `discord`
-- `whatsapp`（bridge）
-- `qq`
-
-### 启动时通道提示
-- Feishu：打印 webhook 地址（host/port）
-- WhatsApp：打印 bridge URL
-- Telegram / Discord / QQ：打印 gateway/polling 启动提示
+| 通道 | 定位 | 启动提示 |
+| --- | --- | --- |
+| `cli` | 💻 本地优先，轻量快速，适合命令行工作流 | 本地交互终端 |
+| `telegram` | ✈️ 移动端指挥中心，安全且响应快（推荐） | 显示 polling 已启动 |
+| `feishu / lark` | 🏢 企业协作场景的专业集成 | 打印 webhook 地址（host/port） |
+| `discord` | 🎮 社区协作场景，支持丰富 markdown 交互 | 显示 gateway 已启动 |
+| `whatsapp`（bridge） | 🟢 通过 bridge 触达受限网络环境下的移动端 | 打印 bridge URL |
+| `qq` | 🐧 面向中文生态的即时通信入口。 | 显示 gateway 已启动 |
 
 ---
 
 ## 🤖 LLM Provider 支持
 
-- `openai` / `openai-compatible`（默认友好）
-- `gemini`（通过 LiteLLM runtime）
-- `anthropic`（通过 LiteLLM runtime）
-- `ollama`（本地开发独立 provider runtime）
+| Provider | 运行路径 | 说明 |
+| --- | --- | --- |
+| `openai` / `openai-compatible` | 原生 provider 路径 | 默认友好，开箱即用 |
+| `gemini` | LiteLLM runtime | 需要安装 `.[providers]` 可选依赖 |
+| `anthropic` | LiteLLM runtime | 需要安装 `.[providers]` 可选依赖 |
+| `ollama` | 本地独立 provider runtime | 适合本地模型开发与调试 |
 
 ---
 
@@ -182,7 +180,7 @@ Gateway 模式：
 closeclaw gateway --config config.yaml
 ```
 
-✨这就是你的私人 Agent！
+### ✨这就是你的私人 Agent！
 
 ---
 
