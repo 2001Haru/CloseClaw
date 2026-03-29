@@ -42,16 +42,19 @@
 
 # ✨ Why CloseClaw
 
-- ### ⚡ **Fast to deploy**
-- Lightweight, Easy-to-Deploy, and equipped with a guarded orchestration loop to ensure strong performance. Powerful personal AI agents, ready in a minute.
+- ## ⚡ **Fast to Deploy**
+- Lightweight, Easy-to-Deploy, and equipped with a guarded orchestration loop to ensure robust performance. Practical personal AI agents, ready in a minute.
 
-- ### 🧠 **Memory management + Proactive execution**
-- A fully replicated (OpenClaw) Memory Management System, Heartbeat and Cron services for scheduled/proactive execution. Long-term memory guaranteed. Fully customizable cognition.
+- ## 🧠 **Structured Memory Management**
+- A structured Memory Management System, including long-term memory constrcution and vectorized memory retrieval support. Long-term memory guaranteed. Fully customizable cognition.
 
-- ### 🛡️ **Security focused**
-- A clear and rigorous Sandbox Permission System, including an Agent-Review mechanism and command blacklist enforcement. Stop worrying about AI hallucinations deleting your inbox.
+- ## 🛡️ **Strong Security Assurance**
+- A clear and rigorous Sandbox Permission System, including an Guardian-Review mechanism and lightweight Windows OS-level Sandbox. Stop worrying about AI hallucinations deleting your inbox.
 
-- ### 🔌 **MCP extensibility**
+- ## 💓 **Proactive Execution**
+- Equipped with Heartbeat and Cron services to support handling any scheduled tasks and wake up periodically to deal with long-term tasks automatically. Proactive Agent, always be with you.
+
+- ## 🔌 **MCP Extensibility**
 - Supporst MCP-Native Extensibility, Being compatible with any OpenClaw skills and tools. Massive ecosystem. Easy to arm your agent.
 
 ---
