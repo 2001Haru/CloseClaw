@@ -2,10 +2,12 @@
   <img src="assets/logo.png" alt="CloseClaw Logo" width="1200">
 </p>
 
+## Welcome Contributing!
+
 [English](README.md) | [简体中文](README_zh.md)
 
 <p align="center">
-  <h1>Lightweight • Security-Focused • Practical Agent</h1>
+  <h1>Lightweight • Secure • Practical Agent</h1>
 </p>
 
 <p align="center">
@@ -19,7 +21,7 @@
 
 ---
 
-## 📷 Preview
+# 📷 Preview
 
 <p align="center">
   <table>
@@ -46,7 +48,7 @@
 - ## 🧠 **Structured Memory Management**
 - A structured Memory Management System, including long-term memory constrcution and vectorized memory retrieval support. Long-term memory guaranteed. Fully customizable cognition.
 
-- ## 🛡️ **Strong Security Assurance**
+- ## 🛡️ **Effective Security Assurance**
 - A clear and rigorous Sandbox Permission System, including an Guardian-Review mechanism and lightweight Windows OS-level Sandbox. Stop worrying about AI hallucinations deleting your inbox.
 
 - ## 💓 **Proactive Execution**

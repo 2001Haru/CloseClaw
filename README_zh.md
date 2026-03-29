@@ -2,6 +2,8 @@
   <img src="assets/logo.png" alt="CloseClaw Logo" width="1200">
 </p>
 
+## 欢迎贡献一份力！
+
 [English](README.md) | [简体中文](README_zh.md)
 
 <p align="center">
@@ -19,7 +21,7 @@
 
 ---
 
-## 📷 效果预览
+# 📷 效果预览
 
 <p align="center">
   <table>
