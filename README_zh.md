@@ -96,12 +96,12 @@ Tool Call
 
 | 通道 | 定位 | 启动提示 |
 | --- | --- | --- |
-| `cli` | 💻 本地优先，轻量快速，适合命令行工作流 | 本地交互终端 |
-| `telegram` | ✈️ 移动端指挥中心，安全且响应快（推荐） | 显示 polling 已启动 |
-| `feishu / lark` | 🏢 企业协作场景的专业集成 | 打印 webhook 地址（host/port） |
-| `discord` | 🎮 社区协作场景，支持丰富 markdown 交互 | 显示 gateway 已启动 |
-| `whatsapp`（bridge） | 🟢 通过 bridge 触达受限网络环境下的移动端 | 打印 bridge URL |
-| `qq` | 🐧 面向中文生态的即时通信入口。 | 显示 gateway 已启动 |
+| `CLI` | 💻 本地优先，轻量快速，适合命令行工作流 | 本地交互终端 |
+| `Telegram` | ✈️ 移动端指挥中心，安全且响应快（推荐） | 显示 polling 已启动 |
+| `Feishu / Lark` | 🏢 企业协作场景的专业集成 | 打印 webhook 地址（host/port） |
+| `Discord` | 🎮 社区协作场景，支持丰富 markdown 交互 | 显示 gateway 已启动 |
+| `Whatsapp`| 🟢 通过 bridge 触达受限网络环境下的移动端 | 打印 bridge URL |
+| `QQ` | 🐧 面向中文生态的即时通信入口 | 显示 gateway 已启动 |
 
 ---
 

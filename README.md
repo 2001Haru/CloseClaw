@@ -90,20 +90,20 @@ Tool Call
 
 ---
 
-## 📡 Channel Support
+# 📡 Channel Support
 
 | Channel | Positioning | Startup Hint |
 | --- | --- | --- |
-| `cli` | 💻 For the purists. Fast, local, and pipe-friendly | Local interactive terminal |
-| `telegram` | ✈️ Mobile command center. Secure and fast (Recommended) | Polling started |
-| `feishu / lark` | 🏢 Professional workflow integration for collaboration | Prints webhook address (host/port) |
-| `discord` | 🎮 Community-driven interactions with rich markdown support | Gateway started |
-| `whatsapp` (bridge) | 🟢 Reachable on locked-down mobile networks via bridge | Prints bridge URL |
-| `qq` | 🐧 Direct access to the classic Chinese social ecosystem | Gateway started |
+| `CLI` | 💻 Fast, local, and pipe-friendly | Local interactive terminal |
+| `Telegram` | ✈️ Mobile command center (Recommended) | Polling started |
+| `Feishu / Lark` | 🏢 Professional workflow | Prints webhook address (host/port) |
+| `Discord` | 🎮 Rich markdown support | Gateway started |
+| `WhatsApp` | 🟢 Reachable on networks via bridge | Prints bridge URL |
+| `QQ` | 🐧 Classic Chinese social ecosystem | Gateway started |
 
 ---
 
-## 🤖 LLM Providers
+# 🤖 LLM Providers
 
 | Provider | Runtime Path | Notes |
 | --- | --- | --- |
@@ -184,8 +184,6 @@ closeclaw gateway --config config.yaml
 ## 🐳 Docker (Optional)
 
 Docker support is optional. Native Windows/Linux usage remains first-class. Please ensure that you have installed and launched your docker engine before the following steps, and check your docker proxies to avoid network problems.
-
-
 
 ### 1) Prepare host files
 
