@@ -2,10 +2,10 @@
   <img src="assets/logo.png" alt="CloseClaw Logo" width="1200">
 </p>
 
-[EN](README.md) | [中文](README_zh.md)
+[English](README.md) | [简体中文](README_zh.md)
 
 <p align="center">
-  <h1>Lightweight • Security-Focused • Practical Agent Runtime</h1>
+  <h1>Lightweight • Security-Focused • Practical Agent</h1>
 </p>
 
 <p align="center">
@@ -14,8 +14,6 @@
   <img alt="Channels" src="https://img.shields.io/badge/Channels-CLI%20%7C%20Telegram%20%7C%20Feishu%20%7C%20Discord%20%7C%20WhatsApp%20%7C%20QQ-0a7ea4">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-f2cc60">
 </p>
-
-# Version 1.12.0. Welcome contributing!
 
 > 🔥 **CloseClaw** is a lightweight, security-focused and practical OpenClaw-style Python framework. It is an personal agent for local and channel-based automation, with built-in guardrails, task scheduling, and memory infrastructure.
 
@@ -27,7 +25,7 @@
   <table>
     <tr>
       <td align="center" width="33%"><strong> 📚 Professional Learning Helper</td>
-      <td align="center" width="33%"><strong> ⏰ 24/7 Non-Stop News Collcetor</td>
+      <td align="center" width="33%"><strong> ⏰ 24/7 Online News Collcetor</td>
       <td align="center" width="33%"><strong> 🔜 On Call Personal Life Assistant</td>
     </tr>
     <tr>
@@ -40,7 +38,7 @@
 
 ---
 
-# ✨ Why CloseClaw
+# 🤔 Why CloseClaw
 
 - ## ⚡ **Fast to Deploy**
 - Lightweight, Easy-to-Deploy, and equipped with a guarded orchestration loop to ensure robust performance. Practical personal AI agents, ready in a minute.
@@ -59,7 +57,7 @@
 
 ---
 
-## ⚓ Key Features
+## ✨ Key Features
 
 > [!IMPORTANT]
 > **Guardian Mechanism** Traditional sandboxes mainly protect local files. CloseClaw Guardian Agent also protects connected assets (mailboxes, cloud repos, third-party APIs) and any MCP touchable content.
@@ -92,16 +90,6 @@ Tool Call
 
 ---
 
-## 🎯 Run Modes
-
-| Mode | What runs | Typical usage |
-|---|---|---|
-| `agent` | CLI only | Local interactive debugging / development |
-| `gateway` | Non-CLI channels only | Bot gateway deployment |
-| `all` | CLI + all enabled channels | Full local integration run |
-
----
-
 ## 📡 Channel Support
 
 ### 🛠️ Supported channels
@@ -127,7 +115,7 @@ Tool Call
 
 ---
 
-## 🚀 Quick Start
+# 🚀 Quick Start
 
 ### 1) Install
 
@@ -275,6 +263,16 @@ docker compose down
   - Verify required provider/channel dependencies are included in `INSTALL_EXTRAS`.
 
 Operational hardening details are documented in [docs/Docker_Runbook.md](docs/Docker_Runbook.md).
+
+---
+
+## 🎯 Run Modes
+
+| Mode | What runs | Typical usage |
+|---|---|---|
+| `agent` | CLI only | Local interactive debugging / development |
+| `gateway` | Non-CLI channels only | Bot gateway deployment |
+| `all` | CLI + all enabled channels | Full local integration run |
 
 ---
 

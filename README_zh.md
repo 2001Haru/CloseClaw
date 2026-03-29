@@ -2,10 +2,10 @@
   <img src="assets/logo.png" alt="CloseClaw Logo" width="1200">
 </p>
 
-[EN](README.md) | [中文](README_zh.md)
+[English](README.md) | [简体中文](README_zh.md)
 
 <p align="center">
-  <h1>轻量 • 安全优先 • 强大 Agent</h1>
+  <h1>轻量 • 安全 • 实用 Agent 助理</h1>
 </p>
 
 <p align="center">
@@ -14,8 +14,6 @@
   <img alt="Channels" src="https://img.shields.io/badge/Channels-CLI%20%7C%20Telegram%20%7C%20Feishu%20%7C%20Discord%20%7C%20WhatsApp%20%7C%20QQ-0a7ea4">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-f2cc60">
 </p>
-
-# 版本 1.12.0. 欢迎贡献一份力!
 
 > 🔥 **CloseClaw** 是一个轻量、安全优先且实用的 OpenClaw 风格 Python 框架。它可作为本地与多通道自动化的个人 Agent，内置安全护栏、任务调度与记忆能力。
 
@@ -40,7 +38,7 @@
 
 ---
 
-# ✨ 为什么选择 CloseClaw
+# 🤔 为什么选择 CloseClaw
 
 - ## ⚡ **部署快**
 - 轻量、易部署，带有受保护的编排 Loop，兼顾性能与稳定。个人强大 AI Agent，分钟级启动。
@@ -59,7 +57,7 @@
 
 ---
 
-## ⚓ 主要特征
+# ✨ 主要特征
 
 > [!IMPORTANT]
 > **Guardian 机制** 传统沙盒主要保护本地文件；CloseClaw 的 Guardian Agent 还会保护联网资产（邮箱、云端代码仓库、第三方 API）以及所有 MCP 可触达内容。
@@ -92,17 +90,6 @@ Tool Call
   -> Execute
 ```
 
-
----
-
-## 🎯 运行模式
-
-| 模式 | 实际运行内容 | 典型用途 |
-|---|---|---|
-| `agent` | 仅 CLI | 本地交互调试 / 开发 |
-| `gateway` | 仅非 CLI 通道 | Bot 网关部署 |
-| `all` | CLI + 所有启用通道 | 本地全链路联调 |
-
 ---
 
 ## 📡 通道支持
@@ -131,7 +118,7 @@ Tool Call
 
 ---
 
-## 🚀 快速开始
+# 🚀 快速开始
 
 ### 1) 安装
 
@@ -277,6 +264,16 @@ docker compose down
   - 检查 `INSTALL_EXTRAS` 是否包含所需 provider/channel 依赖。
 
 生产化建议与硬化细节见 [docs/Docker_Runbook.md](docs/Docker_Runbook.md)。
+
+---
+
+## 🎯 运行模式
+
+| 模式 | 实际运行内容 | 典型用途 |
+|---|---|---|
+| `agent` | 仅 CLI | 本地交互调试 / 开发 |
+| `gateway` | 仅非 CLI 通道 | Bot 网关部署 |
+| `all` | CLI + 所有启用通道 | 本地全链路联调 |
 
 ---
 
