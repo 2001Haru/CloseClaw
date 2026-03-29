@@ -160,6 +160,13 @@ class TelegramChannel(BaseChannel):
         resp_type = response.get("type", "response")
         chat_id = response.get("_chat_id")
         token_prefix = str(response.get("_token_usage_prefix", "") or "").strip()
+        raw_reply_to_message_id = response.get("_reply_to_message_id")
+        reply_to_message_id: Optional[int] = None
+        if raw_reply_to_message_id is not None:
+            try:
+                reply_to_message_id = int(raw_reply_to_message_id)
+            except (TypeError, ValueError):
+                reply_to_message_id = None
         
         if not chat_id or not self._app:
             logger.warning("Cannot send response: no chat_id or app not initialized")
@@ -223,6 +230,8 @@ class TelegramChannel(BaseChannel):
                 chunk_kwargs = dict(kwargs)
                 if idx > 0 and "reply_markup" in chunk_kwargs:
                     chunk_kwargs.pop("reply_markup")
+                if idx > 0 and "reply_to_message_id" in chunk_kwargs:
+                    chunk_kwargs.pop("reply_to_message_id")
 
                 try:
                     await bot.send_message(chat_id=chat_id, text=chunk, parse_mode="Markdown", **chunk_kwargs)
@@ -298,7 +307,10 @@ class TelegramChannel(BaseChannel):
             full_text = "\n".join(parts) if parts else "OK"
             if token_prefix:
                 full_text = f"{token_prefix}\n{full_text}"
-            await safe_send(full_text)
+            send_kwargs: dict[str, Any] = {}
+            if reply_to_message_id is not None:
+                send_kwargs["reply_to_message_id"] = reply_to_message_id
+            await safe_send(full_text, **send_kwargs)
             
         elif resp_type == "auth_request":
             await self._send_auth_request_message(chat_id, response)

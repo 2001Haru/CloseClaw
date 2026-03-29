@@ -123,12 +123,18 @@ class WhatsAppChannel(BaseChannel):
 
         if resp_type in {"response", "assistant_message"} and token_prefix:
             text = f"{token_prefix}\n{text}"
+        reply_to_message_id = str(response.get("_reply_to_message_id", "") or "").strip()
+        payload: dict[str, Any] = {
+            "type": "send",
+            "to": str(chat_id),
+            "text": text[:3500],
+        }
+        if reply_to_message_id and resp_type in {"response", "assistant_message"}:
+            # Bridge-compatible reply hints; unknown fields are expected to be ignored safely.
+            payload["reply_to_message_id"] = reply_to_message_id
+            payload["quoted_message_id"] = reply_to_message_id
         await self._bridge_send(
-            {
-                "type": "send",
-                "to": str(chat_id),
-                "text": text[:3500],
-            }
+            payload
         )
 
     async def send_auth_request(

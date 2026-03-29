@@ -154,7 +154,12 @@ class QQChannel(BaseChannel):
         if resp_type in {"response", "assistant_message"} and token_prefix:
             text = f"{token_prefix}\n{text}"
         self._msg_seq += 1
-        msg_id = response.get("message_id") or str(self._msg_seq)
+        reply_to_message_id = str(response.get("_reply_to_message_id", "") or "").strip()
+        msg_id = (
+            reply_to_message_id
+            if reply_to_message_id and resp_type in {"response", "assistant_message"}
+            else (response.get("message_id") or str(self._msg_seq))
+        )
         chat_type = self._chat_type_cache.get(chat_id, "c2c")
 
         try:

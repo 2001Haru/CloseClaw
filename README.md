@@ -103,6 +103,9 @@ Tool Call
 | `WhatsApp` | 🟢 Reachable on networks via bridge | Prints bridge URL |
 | `QQ` | 🐧 Classic Chinese social ecosystem | Gateway started |
 
+WhatsApp bridge protocol details:
+- [docs/WhatsApp_Bridge_Protocol.md](docs/WhatsApp_Bridge_Protocol.md)
+
 ---
 
 # 🤖 LLM Providers

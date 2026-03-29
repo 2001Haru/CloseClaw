@@ -129,6 +129,13 @@ class DiscordChannel(BaseChannel):
 
         resp_type = response.get("type", "response")
         token_prefix = str(response.get("_token_usage_prefix", "") or "").strip()
+        raw_reply_to_message_id = response.get("_reply_to_message_id")
+        reply_to_message_id: Optional[int] = None
+        if raw_reply_to_message_id is not None:
+            try:
+                reply_to_message_id = int(raw_reply_to_message_id)
+            except (TypeError, ValueError):
+                reply_to_message_id = None
         text = ""
 
         if resp_type in {"response", "assistant_message"}:
@@ -171,6 +178,14 @@ class DiscordChannel(BaseChannel):
             text = f"{token_prefix}\n{text}"
         if len(text) > 1900:
             text = text[:1900] + "..."
+
+        if resp_type in {"response", "assistant_message"} and reply_to_message_id is not None:
+            try:
+                partial = channel.get_partial_message(reply_to_message_id)
+                await channel.send(text, reference=partial, mention_author=False)
+                return
+            except Exception as exc:
+                logger.debug("Discord reply reference failed, fallback to normal send: %s", exc)
 
         await channel.send(text)
 

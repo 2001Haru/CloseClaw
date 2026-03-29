@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 FEISHU_BASE_URL = "https://open.feishu.cn/open-apis"
 FEISHU_TOKEN_URL = f"{FEISHU_BASE_URL}/auth/v3/tenant_access_token/internal"
 FEISHU_SEND_MSG_URL = f"{FEISHU_BASE_URL}/im/v1/messages"
+FEISHU_REPLY_MSG_URL_TEMPLATE = f"{FEISHU_BASE_URL}/im/v1/messages/{{message_id}}/reply"
 
 
 class FeishuChannel(BaseChannel):
@@ -150,6 +151,7 @@ class FeishuChannel(BaseChannel):
         if resp_type in {"response", "assistant_message"}:
             text = response.get("response", "OK")
             tool_results = response.get("tool_results", [])
+            reply_to_message_id = str(response.get("_reply_to_message_id", "") or "").strip()
             lines: list[str] = [text]
 
             if tool_results:
@@ -164,7 +166,12 @@ class FeishuChannel(BaseChannel):
             text = "\n".join(lines)
             if token_prefix:
                 text = f"{token_prefix}\n{text}"
-            await self._send_text_message(chat_id, text)
+            if reply_to_message_id:
+                sent = await self._reply_text_message(reply_to_message_id, text)
+                if not sent:
+                    await self._send_text_message(chat_id, text)
+            else:
+                await self._send_text_message(chat_id, text)
         
         elif resp_type == "auth_request":
             await self._send_auth_card(chat_id, response)
@@ -271,6 +278,26 @@ class FeishuChannel(BaseChannel):
             logger.debug(f"Feishu message sent to {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send Feishu message: {e}")
+
+    async def _reply_text_message(self, message_id: str, text: str) -> bool:
+        """Reply to an existing Feishu message by message_id."""
+        token = await self._ensure_token()
+        reply_url = FEISHU_REPLY_MSG_URL_TEMPLATE.format(message_id=message_id)
+        try:
+            resp = await self._client.post(
+                reply_url,
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "msg_type": "text",
+                    "content": json.dumps({"text": text}),
+                },
+            )
+            resp.raise_for_status()
+            logger.debug("Feishu reply sent to message_id=%s", message_id)
+            return True
+        except Exception as e:
+            logger.warning("Failed to send Feishu reply (message_id=%s): %s", message_id, e)
+            return False
     
     async def _send_auth_card(self, chat_id: str, response: dict[str, Any]) -> None:
         """Send Interactive Card for HITL confirmation."""

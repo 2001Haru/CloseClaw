@@ -71,6 +71,9 @@ channels:  # Message channels; at least one channel should be enabled.
     metadata:
       bridge_url: "ws://127.0.0.1:8765"  # Preferred bridge URL.
       bridge_token: ""  # Optional auth token for bridge.
+      # Bridge should support outbound reply hints:
+      #   reply_to_message_id / quoted_message_id
+      # See docs/WhatsApp_Bridge_Protocol.md
 
   - type: "qq"  # QQ bot channel (qq-botpy).
     enabled: false

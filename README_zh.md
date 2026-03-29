@@ -105,6 +105,9 @@ Tool Call
 | `Whatsapp`| 🟢 通过 bridge 触达受限网络环境下的移动端 | 打印 bridge URL |
 | `QQ` | 🐧 面向中文生态的即时通信入口 | 显示 gateway 已启动 |
 
+WhatsApp bridge 协议说明：
+- [docs/WhatsApp_Bridge_Protocol.md](docs/WhatsApp_Bridge_Protocol.md)
+
 ---
 
 ## 🤖 LLM Provider 支持

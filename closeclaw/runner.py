@@ -397,6 +397,7 @@ async def run_channel(agent: AgentCore,
         # This is needed because AgentCore is channel-agnostic and doesn't
         # carry platform-specific metadata (like chat_id) through responses.
         last_message_metadata: dict[str, Any] = {}
+        last_user_message_id: str = ""
 
         wake_bridge_task: Optional[asyncio.Task] = None
 
@@ -413,7 +414,7 @@ async def run_channel(agent: AgentCore,
         
         async def input_fn():
             """Wrap channel.receive_message to capture metadata."""
-            nonlocal last_message_metadata
+            nonlocal last_message_metadata, last_user_message_id
             # For channels that do not support inject_message, wake_queue must be
             # awaited concurrently with channel input; otherwise cron events can
             # be starved while receive_message is blocking.
@@ -441,6 +442,16 @@ async def run_channel(agent: AgentCore,
 
                 if incoming_metadata:
                     last_message_metadata.update(incoming_metadata)
+
+            if msg:
+                sender_id = str(getattr(msg, "sender_id", "") or "").strip().lower()
+                role = str((getattr(msg, "metadata", {}) or {}).get("role", "")).strip().lower()
+                source = str((getattr(msg, "metadata", {}) or {}).get("source", "")).strip().lower()
+                is_system_message = sender_id == "system" or role == "system" or source in {"cron", "heartbeat"}
+                if not is_system_message:
+                    msg_id = str(getattr(msg, "id", "") or "").strip()
+                    if msg_id:
+                        last_user_message_id = msg_id
             return msg
         
         async def output_fn(response: dict[str, Any]) -> None:
@@ -459,6 +470,24 @@ async def run_channel(agent: AgentCore,
             enriched_response["_token_usage_prefix"] = (
                 f"[TOKENS] {current_tokens}/{max_window_tokens} ({ratio:.2%})"
             )
+
+            resp_type = str(enriched_response.get("type", "response") or "response")
+            if (
+                resp_type in {"response", "assistant_message"}
+                and "_reply_to_message_id" not in enriched_response
+                and last_user_message_id
+            ):
+                enriched_response["_reply_to_message_id"] = last_user_message_id
+
+            # Defensive cleanup for legacy manual quote format introduced previously.
+            # Keep native platform reply behavior while avoiding duplicated quoted text.
+            if resp_type in {"response", "assistant_message"}:
+                raw_response_text = str(enriched_response.get("response", "") or "")
+                legacy_prefix = 'Regarding your last message: "'
+                if raw_response_text.startswith(legacy_prefix):
+                    separator_index = raw_response_text.find('"\n\n')
+                    if separator_index != -1:
+                        enriched_response["response"] = raw_response_text[separator_index + 3 :].lstrip()
             try:
                 await channel.send_response(enriched_response)
             except Exception as exc:

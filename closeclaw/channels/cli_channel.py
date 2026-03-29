@@ -3,8 +3,6 @@
 Shares the same AgentCore instance with other channels.
 Provides stdin/stdout based message exchange and HITL confirmation.
 
-From Planning.md:
-  "鏈湴 CLI 瀹炵幇锛氬祵鍏ュ紡 CLI 椹卞姩锛屼笌 Server 鍏变韩鍚屼竴涓?AgentCore 瀹炰緥锛?   閫氳繃 asyncio.gather 鍚屾椂鍚姩 Server 鍜?CLI 寰幆銆?
 """
 
 import asyncio
@@ -198,7 +196,7 @@ class CLIChannel(BaseChannel):
             # Show main response
             if token_prefix:
                 print(f"{Colors.DIM}{token_prefix}{Colors.RESET}")
-            print(f"{Colors.GREEN}Agent > {Colors.RESET}{text}\n")
+            print(f"{Colors.GREEN}CloseClaw > {Colors.RESET}{text}\n")
             self._input_gate.set()
         
         elif resp_type == "auth_request":
