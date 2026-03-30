@@ -24,6 +24,7 @@ class ContextService:
         planning_service: Any,
         audit_logger: Any,
         compact_memory_max_chars: int = 3000,
+        lazy_sync_max_files_per_query: int = 3,
     ) -> None:
         self.context_manager = context_manager
         self.message_compactor = message_compactor
@@ -33,6 +34,7 @@ class ContextService:
         self.planning_service = planning_service
         self.audit_logger = audit_logger
         self.compact_memory_max_chars = compact_memory_max_chars
+        self.lazy_sync_max_files_per_query = max(1, int(lazy_sync_max_files_per_query))
 
     async def maybe_trigger_memory_flush_before_planning(
         self,
@@ -563,6 +565,20 @@ How to respond:
         logger.info("Retrieving memories for query: %s", query)
 
         try:
+            # Lazy sync daily memory files before retrieval to keep vector index fresh
+            # without paying full re-index cost on every file write.
+            if hasattr(self.memory_manager, "sync_daily_memory_files_lazy"):
+                sync_stats = self.memory_manager.sync_daily_memory_files_lazy(
+                    max_files=self.lazy_sync_max_files_per_query
+                )
+                logger.info(
+                    "Lazy memory sync: indexed_files=%s indexed_chunks=%s pending=%s failed=%s",
+                    sync_stats.get("indexed_files", 0),
+                    sync_stats.get("indexed_chunks", 0),
+                    sync_stats.get("pending_files", 0),
+                    sync_stats.get("failed_files", 0),
+                )
+
             memories = self.memory_manager.retrieve_memories(
                 query=query,
                 top_k=5,

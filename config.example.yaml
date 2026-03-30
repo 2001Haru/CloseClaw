@@ -30,6 +30,9 @@ web_search:  # Optional agent web search provider settings.
   timeout_seconds: 30  # HTTP timeout for search requests.
   duckduckgo_min_interval_seconds: 2.0  # Min seconds between DuckDuckGo requests to reduce rate-limit risk.
 
+memory_index:  # Lazy sync controls for daily memory markdown vectorization.
+  lazy_sync_max_files_per_query: 3  # Max dirty YYYY-MM-DD.md files to sync per retrieve_memory call.
+
 
 mcp:  # Optional MCP server definitions used by mcp-health diagnostics.
   servers:

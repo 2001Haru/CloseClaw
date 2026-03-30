@@ -10,7 +10,10 @@ import logging
 import os
 import sqlite3
 import time
+import hashlib
+import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -162,13 +165,268 @@ class MemoryManager:
                 END;
             """)
 
+        # 4. memory_file_index table for lazy file-to-vector synchronization.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS memory_file_index (
+                path TEXT PRIMARY KEY,
+                mtime REAL NOT NULL,
+                size INTEGER NOT NULL,
+                content_hash TEXT,
+                indexed_at DATETIME,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error TEXT
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_memory_file_index_status ON memory_file_index(status)")
+
         conn.commit()
         conn.close()
 
     def _get_content_hash(self, text: str) -> str:
         """Generate SHA256 hash for text content."""
-        import hashlib
         return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+    def _daily_memory_files(self) -> list[Path]:
+        """Return sorted daily memory files: YYYY-MM-DD.md under CloseClaw Memory/memory."""
+        daily_dir = Path(self.memory_dir) / "memory"
+        if not daily_dir.exists() or not daily_dir.is_dir():
+            return []
+
+        pattern = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+        files = [p for p in daily_dir.iterdir() if p.is_file() and pattern.match(p.name)]
+        # Newest date first for better practical recall freshness.
+        files.sort(key=lambda p: p.name, reverse=True)
+        return files
+
+    def _source_from_path(self, file_path: Path, chunk_index: int) -> str:
+        """Build source field that preserves exact originating file path."""
+        relative_from_workspace = file_path.resolve().relative_to(Path(self.workspace_root).resolve())
+        return f"file:{str(relative_from_workspace).replace(os.sep, '/')}#chunk:{chunk_index}"
+
+    @staticmethod
+    def _chunk_text(content: str, max_chars: int = 1200) -> list[str]:
+        """Chunk markdown-ish text into medium blocks for retrieval quality."""
+        normalized = content.replace("\r\n", "\n").strip()
+        if not normalized:
+            return []
+
+        paragraphs = [p.strip() for p in normalized.split("\n\n") if p.strip()]
+        chunks: list[str] = []
+        current: list[str] = []
+        current_len = 0
+
+        for para in paragraphs:
+            plen = len(para)
+            # Paragraph itself is too large: split hard by size.
+            if plen > max_chars:
+                if current:
+                    chunks.append("\n\n".join(current).strip())
+                    current = []
+                    current_len = 0
+                for start in range(0, plen, max_chars):
+                    piece = para[start:start + max_chars].strip()
+                    if piece:
+                        chunks.append(piece)
+                continue
+
+            sep_cost = 2 if current else 0
+            if current_len + sep_cost + plen > max_chars:
+                chunks.append("\n\n".join(current).strip())
+                current = [para]
+                current_len = plen
+            else:
+                current.append(para)
+                current_len += sep_cost + plen
+
+        if current:
+            chunks.append("\n\n".join(current).strip())
+        return chunks
+
+    def _delete_file_chunks(self, file_path: Path) -> None:
+        """Delete previously indexed chunks for one file."""
+        source_prefix = self._source_from_path(file_path, 0).rsplit("#chunk:", 1)[0]
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM memory_chunks WHERE source LIKE ?", (f"{source_prefix}#chunk:%",))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _index_file_chunks(self, file_path: Path, content: str, content_hash: str) -> int:
+        """Rebuild indexed chunks for one file and return inserted chunk count."""
+        chunks = self._chunk_text(content)
+        self._delete_file_chunks(file_path)
+        if not chunks:
+            return 0
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            inserted = 0
+            for idx, chunk in enumerate(chunks, start=1):
+                embedding = self.get_embedding(chunk)
+                source = self._source_from_path(file_path, idx)
+                metadata = json.dumps(
+                    {
+                        "index_type": "daily_memory_file",
+                        "chunk_index": idx,
+                        "chunk_count": len(chunks),
+                        "file_hash": content_hash,
+                    },
+                    ensure_ascii=False,
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO memory_chunks (session_id, content, embedding, source, metadata)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    ("__daily_memory_index__", chunk, embedding.tobytes(), source, metadata),
+                )
+                inserted += 1
+            conn.commit()
+            return inserted
+        finally:
+            conn.close()
+
+    def sync_daily_memory_files_lazy(self, max_files: int = 3) -> dict[str, int]:
+        """Lazy sync daily memory files into vector DB with bounded per-call work."""
+        budget = max(1, int(max_files))
+        files = self._daily_memory_files()
+        file_map = {str(p.resolve()): p for p in files}
+        now_iso = datetime.now().isoformat()
+
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT path FROM memory_file_index")
+            indexed_paths = {str(row["path"]) for row in cursor.fetchall()}
+
+            # Drop stale index entries when files were removed.
+            stale_paths = indexed_paths - set(file_map.keys())
+            for stale_path in stale_paths:
+                stale = Path(stale_path)
+                try:
+                    self._delete_file_chunks(stale)
+                except Exception:
+                    pass
+                cursor.execute("DELETE FROM memory_file_index WHERE path = ?", (stale_path,))
+            conn.commit()
+
+            # Fetch current index rows after stale cleanup.
+            cursor.execute("SELECT path, mtime, size, content_hash FROM memory_file_index")
+            current_rows = {
+                str(row["path"]): {
+                    "mtime": float(row["mtime"]),
+                    "size": int(row["size"]),
+                    "content_hash": str(row["content_hash"] or ""),
+                }
+                for row in cursor.fetchall()
+            }
+        finally:
+            conn.close()
+
+        pending: list[Path] = []
+        for path_str, path_obj in file_map.items():
+            stat = path_obj.stat()
+            row = current_rows.get(path_str)
+            if row is None:
+                pending.append(path_obj)
+                continue
+            if abs(float(stat.st_mtime) - row["mtime"]) > 1e-6 or int(stat.st_size) != row["size"]:
+                pending.append(path_obj)
+
+        indexed_files = 0
+        indexed_chunks = 0
+        failed_files = 0
+        skipped_files = max(0, len(pending) - budget)
+
+        for file_path in pending[:budget]:
+            path_str = str(file_path.resolve())
+            try:
+                content = file_path.read_text(encoding="utf-8")
+                content_hash = self._get_content_hash(content)
+                stat = file_path.stat()
+
+                previous_hash = current_rows.get(path_str, {}).get("content_hash", "")
+                if previous_hash and previous_hash == content_hash:
+                    conn = sqlite3.connect(self.db_path)
+                    try:
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            """
+                            INSERT INTO memory_file_index(path, mtime, size, content_hash, indexed_at, status, error)
+                            VALUES (?, ?, ?, ?, ?, 'synced', NULL)
+                            ON CONFLICT(path) DO UPDATE SET
+                                mtime=excluded.mtime,
+                                size=excluded.size,
+                                indexed_at=excluded.indexed_at,
+                                status='synced',
+                                error=NULL
+                            """,
+                            (path_str, float(stat.st_mtime), int(stat.st_size), content_hash, now_iso),
+                        )
+                        conn.commit()
+                    finally:
+                        conn.close()
+                    indexed_files += 1
+                    continue
+
+                chunk_count = self._index_file_chunks(file_path, content, content_hash)
+                conn = sqlite3.connect(self.db_path)
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        INSERT INTO memory_file_index(path, mtime, size, content_hash, indexed_at, status, error)
+                        VALUES (?, ?, ?, ?, ?, 'synced', NULL)
+                        ON CONFLICT(path) DO UPDATE SET
+                            mtime=excluded.mtime,
+                            size=excluded.size,
+                            content_hash=excluded.content_hash,
+                            indexed_at=excluded.indexed_at,
+                            status='synced',
+                            error=NULL
+                        """,
+                        (path_str, float(stat.st_mtime), int(stat.st_size), content_hash, now_iso),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+
+                indexed_files += 1
+                indexed_chunks += chunk_count
+            except Exception as exc:
+                failed_files += 1
+                conn = sqlite3.connect(self.db_path)
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """
+                        INSERT INTO memory_file_index(path, mtime, size, content_hash, indexed_at, status, error)
+                        VALUES (?, 0, 0, '', ?, 'error', ?)
+                        ON CONFLICT(path) DO UPDATE SET
+                            indexed_at=excluded.indexed_at,
+                            status='error',
+                            error=excluded.error
+                        """,
+                        (path_str, now_iso, str(exc)),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                logger.warning("Failed to sync daily memory file: %s (%s)", file_path, exc)
+
+        return {
+            "total_daily_files": len(files),
+            "pending_files": len(pending),
+            "indexed_files": indexed_files,
+            "indexed_chunks": indexed_chunks,
+            "failed_files": failed_files,
+            "skipped_files": skipped_files,
+        }
 
     def get_embedding(self, text: str) -> np.ndarray:
         """Get embedding for text, using cache if available."""
@@ -325,8 +583,8 @@ class MemoryManager:
         sql = "SELECT id, content, embedding, source, timestamp, metadata FROM memory_chunks"
         params = []
         if session_id:
-            sql += " WHERE session_id = ?"
-            params.append(session_id)
+            sql += " WHERE session_id = ? OR session_id = ?"
+            params.extend([session_id, "__daily_memory_index__"])
             
         cursor.execute(sql, params)
         rows = cursor.fetchall()

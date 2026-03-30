@@ -206,6 +206,11 @@ class AgentCore:
             state_file_getter=lambda: self.state_file,
             task_manager_getter=lambda: getattr(self, "task_manager", None),
         )
+        memory_index_cfg = self.config.metadata.get("memory_index", {})
+        lazy_sync_budget = max(
+            1,
+            int(memory_index_cfg.get("lazy_sync_max_files_per_query", 3)),
+        )
         self.context_service = ContextService(
             context_manager=self.context_manager,
             message_compactor=self.message_compactor,
@@ -215,6 +220,7 @@ class AgentCore:
             planning_service=self.planning_service,
             audit_logger=self.audit_logger,
             compact_memory_max_chars=self.COMPACT_MEMORY_MAX_CHARS,
+            lazy_sync_max_files_per_query=lazy_sync_budget,
         )
         self.orchestrator_service.context_service = self.context_service
         self._runtime_message_output_fn: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None

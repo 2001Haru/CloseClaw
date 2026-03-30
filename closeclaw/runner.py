@@ -277,6 +277,9 @@ def create_agent(config: CloseCrawlConfig,
         "telemetry": config.orchestrator.telemetry.to_dict(),
         "rollout": config.orchestrator.rollout.to_dict(),
     }
+    agent_config.metadata["memory_index"] = {
+        "lazy_sync_max_files_per_query": config.memory_index.lazy_sync_max_files_per_query,
+    }
     
     # Auto-create LLM provider from config if not provided
     if llm_provider is None:

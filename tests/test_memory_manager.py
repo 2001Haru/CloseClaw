@@ -174,4 +174,68 @@ def test_add_memory_deduplicates_cleaned_content(memory_manager):
         conn.close()
 
 
+def test_sync_daily_memory_files_lazy_indexes_daily_files(memory_manager, temp_workspace):
+    """Daily memory markdown files should be indexed into memory_chunks with file source."""
+    memory_daily_dir = os.path.join(temp_workspace, "CloseClaw Memory", "memory")
+    os.makedirs(memory_daily_dir, exist_ok=True)
+
+    file_a = os.path.join(memory_daily_dir, "2026-03-29.md")
+    file_b = os.path.join(memory_daily_dir, "2026-03-30.md")
+    with open(file_a, "w", encoding="utf-8") as f:
+        f.write("# Day A\n\nTask A done.")
+    with open(file_b, "w", encoding="utf-8") as f:
+        f.write("# Day B\n\nTask B pending.")
+
+    stats = memory_manager.sync_daily_memory_files_lazy(max_files=10)
+    assert stats["indexed_files"] >= 2
+    assert stats["failed_files"] == 0
+
+    import sqlite3
+    conn = sqlite3.connect(memory_manager.db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT source FROM memory_chunks WHERE source LIKE 'file:CloseClaw Memory/memory/%'")
+        rows = [row[0] for row in cursor.fetchall()]
+        assert any("2026-03-29.md" in source for source in rows)
+        assert any("2026-03-30.md" in source for source in rows)
+    finally:
+        conn.close()
+
+
+def test_sync_daily_memory_files_lazy_updates_modified_file(memory_manager, temp_workspace):
+    """When daily memory file changes, lazy sync should refresh indexed chunks."""
+    memory_daily_dir = os.path.join(temp_workspace, "CloseClaw Memory", "memory")
+    os.makedirs(memory_daily_dir, exist_ok=True)
+
+    file_path = os.path.join(memory_daily_dir, "2026-03-30.md")
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("Initial note")
+
+    memory_manager.sync_daily_memory_files_lazy(max_files=10)
+
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("Updated note after edit")
+
+    stats = memory_manager.sync_daily_memory_files_lazy(max_files=10)
+    assert stats["indexed_files"] >= 1
+    assert stats["failed_files"] == 0
+
+    import sqlite3
+    conn = sqlite3.connect(memory_manager.db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT content FROM memory_chunks
+            WHERE source LIKE 'file:CloseClaw Memory/memory/2026-03-30.md#chunk:%'
+            """
+        )
+        chunks = [row[0] for row in cursor.fetchall()]
+        assert chunks
+        assert any("Updated note after edit" in c for c in chunks)
+        assert all("Initial note" not in c for c in chunks)
+    finally:
+        conn.close()
+
+
 

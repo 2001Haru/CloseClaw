@@ -286,6 +286,18 @@ class WebSearchConfig:
 
 
 @dataclass
+class MemoryIndexConfig:
+    """Lazy memory file indexing configuration."""
+
+    lazy_sync_max_files_per_query: int = 3
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "lazy_sync_max_files_per_query": self.lazy_sync_max_files_per_query,
+        }
+
+
+@dataclass
 class CloseCrawlConfig:
     """Main CloseClaw configuration."""
     agent_id: str = "closeclaw-agent"
@@ -306,6 +318,7 @@ class CloseCrawlConfig:
     heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
     cron: CronConfig = field(default_factory=CronConfig)
     web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
+    memory_index: MemoryIndexConfig = field(default_factory=MemoryIndexConfig)
     
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -327,6 +340,7 @@ class CloseCrawlConfig:
             "heartbeat": self.heartbeat.to_dict(),
             "cron": self.cron.to_dict(),
             "web_search": self.web_search.to_dict(),
+            "memory_index": self.memory_index.to_dict(),
         }
 
 
@@ -604,6 +618,14 @@ class ConfigLoader:
             timeout_seconds=web_search_raw.get("timeout_seconds", 30),
             duckduckgo_min_interval_seconds=web_search_raw.get("duckduckgo_min_interval_seconds", 2.0),
         )
+
+        memory_index_raw = raw_config.get("memory_index", {})
+        memory_index = MemoryIndexConfig(
+            lazy_sync_max_files_per_query=max(
+                1,
+                int(memory_index_raw.get("lazy_sync_max_files_per_query", 3)),
+            ),
+        )
         
         # Main config
         agent_raw = raw_config.get("agent", {})
@@ -628,6 +650,7 @@ class ConfigLoader:
             heartbeat=heartbeat,
             cron=cron,
             web_search=web_search,
+            memory_index=memory_index,
         )
         
         return config
