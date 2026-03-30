@@ -59,14 +59,14 @@
 
 ---
 
-## ✨ Key Features
+# ✨ Key Features
 
 > [!IMPORTANT]
 > **Guardian Mechanism** Traditional sandboxes mainly protect local files. CloseClaw Guardian Agent also protects connected assets (mailboxes, cloud repos, third-party APIs) and any MCP touchable content.
 
 ### 👮 Guardian Monitor Design
 - Guardian Agent reviews actions intelligently and intercepts high-impact connected actions before execution.
-- Keeps MCP/network tools under the same safety policy.
+- Keeps MCP/network tools under the same safety policy, allowing to configure freely the High-risk tool supervision pool in `config.yaml`.
 
 ### 🔒 Consensus Mode = Safer Automation
 - In `consensus` mode, Guardian Agent can auto-review sensitive calls first.

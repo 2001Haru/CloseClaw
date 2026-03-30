@@ -66,7 +66,7 @@
 
 ### 👮 Guardian 监护式设计
 - Guardian Agent 智能审核并且在执行前拦截高影响的联网操作。
-- MCP/网络工具统一纳入同一安全策略。
+- MCP/网络工具统一纳入同一安全策略，可在 `config.yaml` 自由配置高风险工具监控池。
 
 ### 🔒 Consensus 模式 = 更安全的自动化
 - 在 `consensus` 模式下，Guardian Agent 会优先自动审查敏感调用。
