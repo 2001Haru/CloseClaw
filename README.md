@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="CloseClaw Logo" width="1200">
 </p>
 
-## Welcome Contributing!
+## Welcome Contributing! Windows First!
 
 [English](README.md) | [简体中文](README_zh.md)
 

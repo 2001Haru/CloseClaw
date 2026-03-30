@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="CloseClaw Logo" width="1200">
 </p>
 
-## 欢迎贡献一份力！
+## 欢迎贡献一份力！Windows 优先！
 
 [English](README.md) | [简体中文](README_zh.md)
 
