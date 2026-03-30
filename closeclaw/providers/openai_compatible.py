@@ -17,7 +17,7 @@ from .base import (
 )
 
 logger = logging.getLogger(__name__)
-_OPENAI_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name"})
+_OPENAI_MSG_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"})
 
 
 class OpenAICompatibleProvider:
@@ -51,6 +51,9 @@ class OpenAICompatibleProvider:
             sanitize_empty_messages(messages),
             _OPENAI_MSG_KEYS,
         )
+        moonshot_mode = self._is_moonshot_like()
+        if moonshot_mode:
+            cleaned_messages = self._with_reasoning_content_for_tool_calls(cleaned_messages)
 
         body: dict[str, Any] = {
             "model": self.model,
@@ -71,14 +74,14 @@ class OpenAICompatibleProvider:
 
         started = time.perf_counter()
 
-        async def _request() -> dict[str, Any]:
+        async def _request(request_body: dict[str, Any]) -> dict[str, Any]:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-                response = await client.post(url, headers=headers, json=body)
+                response = await client.post(url, headers=headers, json=request_body)
                 response.raise_for_status()
                 return response.json()
 
         try:
-            data = await run_with_transient_retry(_request)
+            data = await run_with_transient_retry(lambda: _request(body))
             text, tool_calls = self._parse_response(data)
 
             latency_ms = (time.perf_counter() - started) * 1000.0
@@ -97,8 +100,106 @@ class OpenAICompatibleProvider:
         except httpx.TimeoutException:
             raise TimeoutError(f"LLM request timed out after {self.timeout_seconds}s")
         except httpx.HTTPStatusError as e:
+            # Compatibility fallback: some models (e.g. Kimi variants) only accept temperature=1.
+            if self._should_retry_with_temperature_one(e, body):
+                retry_body = dict(body)
+                retry_body["temperature"] = 1
+                try:
+                    data = await run_with_transient_retry(lambda: _request(retry_body))
+                    text, tool_calls = self._parse_response(data)
+                    latency_ms = (time.perf_counter() - started) * 1000.0
+                    logger.info(
+                        "provider=openai-compatible model=%s fallback=temperature_1 latency_ms=%.2f tool_calls=%s",
+                        self.model,
+                        latency_ms,
+                        len(tool_calls or []),
+                    )
+                    return text, tool_calls
+                except httpx.HTTPStatusError as retry_exc:
+                    error_body = retry_exc.response.text[:500] if retry_exc.response else "No response"
+                    raise RuntimeError(f"LLM API error {retry_exc.response.status_code}: {error_body}")
+
+            # Compatibility fallback: Moonshot thinking mode can require reasoning_content
+            # for assistant messages that include tool_calls.
+            if moonshot_mode and self._should_retry_with_reasoning_content(e):
+                retry_body = dict(body)
+                retry_body["messages"] = self._with_reasoning_content_for_tool_calls(
+                    list(retry_body.get("messages", []))
+                )
+                try:
+                    data = await run_with_transient_retry(lambda: _request(retry_body))
+                    text, tool_calls = self._parse_response(data)
+                    latency_ms = (time.perf_counter() - started) * 1000.0
+                    logger.info(
+                        "provider=openai-compatible model=%s fallback=reasoning_content_backfill latency_ms=%.2f tool_calls=%s",
+                        self.model,
+                        latency_ms,
+                        len(tool_calls or []),
+                    )
+                    return text, tool_calls
+                except httpx.HTTPStatusError as retry_exc:
+                    error_body = retry_exc.response.text[:500] if retry_exc.response else "No response"
+                    raise RuntimeError(f"LLM API error {retry_exc.response.status_code}: {error_body}")
+
             error_body = e.response.text[:500] if e.response else "No response"
             raise RuntimeError(f"LLM API error {e.response.status_code}: {error_body}")
+
+    @staticmethod
+    def _should_retry_with_temperature_one(exc: httpx.HTTPStatusError, request_body: dict[str, Any]) -> bool:
+        """Return True when API explicitly reports model only allows temperature=1."""
+        if not exc.response or exc.response.status_code != 400:
+            return False
+        try:
+            current_temp = float(request_body.get("temperature", 0))
+        except Exception:
+            current_temp = 0.0
+        if abs(current_temp - 1.0) < 1e-9:
+            return False
+
+        raw = (exc.response.text or "").lower()
+        if "invalid temperature" in raw and "only 1 is allowed" in raw:
+            return True
+        # Broader fallback for providers with similar wording.
+        if "temperature" in raw and "only 1" in raw and "allowed" in raw:
+            return True
+        return False
+
+    def _is_moonshot_like(self) -> bool:
+        base = (self.base_url or "").lower()
+        model = (self.model or "").lower()
+        return ("moonshot" in base) or ("moonshot" in model) or ("kimi" in model)
+
+    @staticmethod
+    def _with_reasoning_content_for_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Backfill reasoning_content for assistant tool_call messages when missing."""
+        fixed: list[dict[str, Any]] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role", "")).strip().lower()
+            has_tool_calls = bool(msg.get("tool_calls"))
+            if role == "assistant" and has_tool_calls and "reasoning_content" not in msg:
+                patched = dict(msg)
+                content = patched.get("content")
+                if isinstance(content, str) and content.strip():
+                    patched["reasoning_content"] = content
+                else:
+                    patched["reasoning_content"] = "[reasoning omitted]"
+                fixed.append(patched)
+            else:
+                fixed.append(msg)
+        return fixed
+
+    @staticmethod
+    def _should_retry_with_reasoning_content(exc: httpx.HTTPStatusError) -> bool:
+        if not exc.response or exc.response.status_code != 400:
+            return False
+        raw = (exc.response.text or "").lower()
+        return (
+            "thinking is enabled" in raw
+            and "reasoning_content" in raw
+            and "tool call message" in raw
+        )
 
     def _parse_response(self, data: dict[str, Any]) -> tuple[str, Optional[list[ToolCall]]]:
         choices = data.get("choices", [])

@@ -51,7 +51,9 @@ class QQChannel(BaseChannel):
         self._client_task: Optional[asyncio.Task] = None
         self._chat_type_cache: dict[str, str] = {}
         self._processed_ids: deque[str] = deque(maxlen=1000)
-        self._msg_seq = 1
+        self._last_message_id_by_chat: dict[str, str] = {}
+        self._seq_anchor_by_chat: dict[str, str] = {}
+        self._seq_counter_by_chat: dict[str, int] = {}
 
     async def start(self) -> None:
         self._running = True
@@ -153,13 +155,43 @@ class QQChannel(BaseChannel):
 
         if resp_type in {"response", "assistant_message"} and token_prefix:
             text = f"{token_prefix}\n{text}"
-        self._msg_seq += 1
+
         reply_to_message_id = str(response.get("_reply_to_message_id", "") or "").strip()
-        msg_id = (
-            reply_to_message_id
-            if reply_to_message_id and resp_type in {"response", "assistant_message"}
-            else (response.get("message_id") or str(self._msg_seq))
-        )
+        msg_id = ""
+        if reply_to_message_id and resp_type in {"response", "assistant_message"}:
+            msg_id = reply_to_message_id
+        elif response.get("message_id"):
+            msg_id = str(response.get("message_id"))
+        else:
+            msg_id = self._last_message_id_by_chat.get(chat_id, "")
+
+        # QQ passive APIs require a valid incoming msg_id.
+        if not msg_id:
+            logger.warning(
+                "Skipping QQ send: no valid msg_id for chat_id=%s (type=%s)",
+                chat_id,
+                resp_type,
+            )
+            return
+
+        anchor = self._seq_anchor_by_chat.get(chat_id, "")
+        if anchor != msg_id:
+            self._seq_anchor_by_chat[chat_id] = msg_id
+            self._seq_counter_by_chat[chat_id] = 1
+        else:
+            self._seq_counter_by_chat[chat_id] = self._seq_counter_by_chat.get(chat_id, 1) + 1
+
+        msg_seq = self._seq_counter_by_chat[chat_id]
+        # QQ passive reply supports small bounded follow-up sequence for one msg_id.
+        if msg_seq > 5:
+            logger.warning(
+                "Skipping QQ send: msg_seq overflow for chat_id=%s msg_id=%s seq=%s",
+                chat_id,
+                msg_id,
+                msg_seq,
+            )
+            return
+
         chat_type = self._chat_type_cache.get(chat_id, "c2c")
 
         try:
@@ -169,7 +201,7 @@ class QQChannel(BaseChannel):
                     msg_type=0,
                     content=text[:1800],
                     msg_id=msg_id,
-                    msg_seq=self._msg_seq,
+                    msg_seq=msg_seq,
                 )
             else:
                 await self._client.api.post_c2c_message(
@@ -177,7 +209,7 @@ class QQChannel(BaseChannel):
                     msg_type=0,
                     content=text[:1800],
                     msg_id=msg_id,
-                    msg_seq=self._msg_seq,
+                    msg_seq=msg_seq,
                 )
         except Exception as exc:
             logger.error("Error sending QQ response: %s", exc)
@@ -228,12 +260,19 @@ class QQChannel(BaseChannel):
                 self._chat_type_cache[chat_id] = "group"
             else:
                 author = getattr(data, "author", None)
+                user_openid = str(getattr(author, "user_openid", "") or "")
                 sender_id = str(
-                    getattr(author, "id", None)
-                    or getattr(author, "user_openid", "")
+                    user_openid
+                    or getattr(author, "id", None)
+                    or ""
                 )
-                chat_id = sender_id
+                chat_id = user_openid or sender_id
                 self._chat_type_cache[chat_id] = "c2c"
+
+            if msg_id and chat_id:
+                self._last_message_id_by_chat[chat_id] = msg_id
+                self._seq_anchor_by_chat[chat_id] = msg_id
+                self._seq_counter_by_chat[chat_id] = 0
 
             if self._try_resolve_auth_from_message(sender_id=sender_id, content=content):
                 return
