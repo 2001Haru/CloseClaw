@@ -65,6 +65,8 @@ def _create_guardian_llm_provider(config: CloseCrawlConfig, main_llm_provider: A
             temperature=0.0,
             max_tokens=config.llm.max_tokens,
             timeout_seconds=config.llm.timeout_seconds,
+            thinking_enabled=config.llm.thinking_enabled,
+            reasoning_effort=config.llm.reasoning_effort,
         )
         logger.info(
             "Consensus guardian provider override enabled: %s/%s",
@@ -244,6 +246,8 @@ def create_agent(config: CloseCrawlConfig,
         temperature=config.llm.temperature,
         max_tokens=config.llm.max_tokens,
         timeout_seconds=config.llm.timeout_seconds,
+        thinking_enabled=config.llm.thinking_enabled,
+        reasoning_effort=config.llm.reasoning_effort,
     )
     
     context_mgmt_settings = ContextManagementSettings(
@@ -292,6 +296,8 @@ def create_agent(config: CloseCrawlConfig,
                 temperature=config.llm.temperature,
                 max_tokens=config.llm.max_tokens,
                 timeout_seconds=config.llm.timeout_seconds,
+                thinking_enabled=config.llm.thinking_enabled,
+                reasoning_effort=config.llm.reasoning_effort,
             )
             logger.info(f"LLM provider created: {config.llm.provider}/{config.llm.model} "
                        f"(base_url={config.llm.base_url or 'default'})")

@@ -33,12 +33,16 @@ class OllamaProvider:
         temperature: float = 0.0,
         max_tokens: int = 2000,
         timeout_seconds: int = 60,
+        thinking_enabled: Optional[bool] = None,
+        reasoning_effort: Optional[str] = None,
     ):
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout_seconds = timeout_seconds
+        self.thinking_enabled = thinking_enabled
+        self.reasoning_effort = reasoning_effort
 
         logger.info("Ollama provider initialized: model=%s base_url=%s", model, self.base_url)
 

@@ -21,6 +21,8 @@ class LLMConfig:
     temperature: float = 0.0
     max_tokens: int = 2000
     timeout_seconds: int = 60
+    thinking_enabled: Optional[bool] = None
+    reasoning_effort: Optional[str] = None
     
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -31,6 +33,8 @@ class LLMConfig:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "timeout_seconds": self.timeout_seconds,
+            "thinking_enabled": self.thinking_enabled,
+            "reasoning_effort": self.reasoning_effort,
         }
 
 
@@ -462,6 +466,12 @@ class ConfigLoader:
             temperature=llm_raw.get("temperature", 0.0),
             max_tokens=llm_raw.get("max_tokens", 2000),
             timeout_seconds=llm_raw.get("timeout_seconds", 60),
+            thinking_enabled=llm_raw.get("thinking_enabled"),
+            reasoning_effort=(
+                str(llm_raw.get("reasoning_effort")).strip()
+                if llm_raw.get("reasoning_effort") is not None
+                else None
+            ),
         )
         
         # Channels

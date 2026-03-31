@@ -17,9 +17,13 @@ llm:  # LLM provider settings.
   # api_key: ""  # ollama does not require api_key by default
   # base_url: "http://localhost:11434"
 
-  temperature: 0.0  # Sampling temperature; 0 is deterministic.
+  temperature: 0.6  # Sampling temperature; 0.6 is a common default for most of LLMs.
   max_tokens: 5000  # Max output tokens per LLM response.
   timeout_seconds: 60  # Network timeout for one model call.
+  # Optional cross-provider reasoning controls.
+  # Set null to let provider/model default behavior decide.
+  thinking_enabled: null  # true=prefer enable reasoning, false=prefer disable, null=provider default.
+  reasoning_effort: null  # Optional effort hint (for providers/models that support it).
 
 
 web_search:  # Optional agent web search provider settings.

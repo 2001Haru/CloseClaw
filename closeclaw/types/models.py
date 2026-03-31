@@ -126,6 +126,8 @@ class LLMSettings:
     temperature: float = 0.0
     max_tokens: int = 2000
     timeout_seconds: int = 60
+    thinking_enabled: Optional[bool] = None
+    reasoning_effort: Optional[str] = None
     
     def to_dict(self) -> dict:
         return {
@@ -136,6 +138,8 @@ class LLMSettings:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "timeout_seconds": self.timeout_seconds,
+            "thinking_enabled": self.thinking_enabled,
+            "reasoning_effort": self.reasoning_effort,
         }
 
 

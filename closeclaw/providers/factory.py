@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from .litellm_provider import LiteLLMProvider
 from .ollama import OllamaProvider
@@ -35,6 +35,8 @@ def create_llm_provider(
     temperature: float = 0.0,
     max_tokens: int = 2000,
     timeout_seconds: int = 60,
+    thinking_enabled: Optional[bool] = None,
+    reasoning_effort: Optional[str] = None,
     **kwargs: Any,
 ) -> Any:
     """Create provider instance based on explicit provider and model hints."""
@@ -50,6 +52,8 @@ def create_llm_provider(
             temperature=temperature,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
+            thinking_enabled=thinking_enabled,
+            reasoning_effort=reasoning_effort,
         )
 
     if spec.runtime == "ollama":
@@ -60,6 +64,8 @@ def create_llm_provider(
             temperature=temperature,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
+            thinking_enabled=thinking_enabled,
+            reasoning_effort=reasoning_effort,
         )
 
     resolved_url = _resolve_base_url(provider or spec.name, base_url)
@@ -76,4 +82,6 @@ def create_llm_provider(
         temperature=temperature,
         max_tokens=max_tokens,
         timeout_seconds=timeout_seconds,
+        thinking_enabled=thinking_enabled,
+        reasoning_effort=reasoning_effort,
     )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any, Optional
 
@@ -31,6 +32,8 @@ class OpenAICompatibleProvider:
         temperature: float = 0.0,
         max_tokens: int = 2000,
         timeout_seconds: int = 60,
+        thinking_enabled: Optional[bool] = None,
+        reasoning_effort: Optional[str] = None,
     ):
         self.api_key = api_key
         self.model = model
@@ -38,6 +41,8 @@ class OpenAICompatibleProvider:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout_seconds = timeout_seconds
+        self.thinking_enabled = thinking_enabled
+        self.reasoning_effort = reasoning_effort
 
         logger.info("OpenAI-compatible provider initialized: model=%s base_url=%s", model, self.base_url)
 
@@ -61,6 +66,7 @@ class OpenAICompatibleProvider:
             "temperature": kwargs.get("temperature", self.temperature),
             "max_tokens": max(1, int(kwargs.get("max_tokens", self.max_tokens))),
         }
+        self._apply_reasoning_controls(body, kwargs=kwargs)
 
         if tools:
             body["tools"] = tools
@@ -100,17 +106,20 @@ class OpenAICompatibleProvider:
         except httpx.TimeoutException:
             raise TimeoutError(f"LLM request timed out after {self.timeout_seconds}s")
         except httpx.HTTPStatusError as e:
-            # Compatibility fallback: some models (e.g. Kimi variants) only accept temperature=1.
-            if self._should_retry_with_temperature_one(e, body):
+            # Compatibility fallback: some models only accept one fixed temperature.
+            # Example: "invalid temperature: only 0.6 is allowed for this model"
+            required_temperature = self._extract_only_allowed_temperature(e)
+            if required_temperature is not None:
                 retry_body = dict(body)
-                retry_body["temperature"] = 1
+                retry_body["temperature"] = required_temperature
                 try:
                     data = await run_with_transient_retry(lambda: _request(retry_body))
                     text, tool_calls = self._parse_response(data)
                     latency_ms = (time.perf_counter() - started) * 1000.0
                     logger.info(
-                        "provider=openai-compatible model=%s fallback=temperature_1 latency_ms=%.2f tool_calls=%s",
+                        "provider=openai-compatible model=%s fallback=fixed_temperature(%s) latency_ms=%.2f tool_calls=%s",
                         self.model,
+                        required_temperature,
                         latency_ms,
                         len(tool_calls or []),
                     )
@@ -145,24 +154,22 @@ class OpenAICompatibleProvider:
             raise RuntimeError(f"LLM API error {e.response.status_code}: {error_body}")
 
     @staticmethod
-    def _should_retry_with_temperature_one(exc: httpx.HTTPStatusError, request_body: dict[str, Any]) -> bool:
-        """Return True when API explicitly reports model only allows temperature=1."""
+    def _extract_only_allowed_temperature(exc: httpx.HTTPStatusError) -> Optional[float]:
+        """Parse provider error text and extract required fixed temperature if present."""
         if not exc.response or exc.response.status_code != 400:
-            return False
-        try:
-            current_temp = float(request_body.get("temperature", 0))
-        except Exception:
-            current_temp = 0.0
-        if abs(current_temp - 1.0) < 1e-9:
-            return False
+            return None
 
         raw = (exc.response.text or "").lower()
-        if "invalid temperature" in raw and "only 1 is allowed" in raw:
-            return True
-        # Broader fallback for providers with similar wording.
-        if "temperature" in raw and "only 1" in raw and "allowed" in raw:
-            return True
-        return False
+        if "temperature" not in raw or "only" not in raw or "allowed" not in raw:
+            return None
+
+        match = re.search(r"only\s+(-?\d+(?:\.\d+)?)\s+is\s+allowed", raw)
+        if not match:
+            return None
+        try:
+            return float(match.group(1))
+        except Exception:
+            return None
 
     def _is_moonshot_like(self) -> bool:
         base = (self.base_url or "").lower()
@@ -200,6 +207,22 @@ class OpenAICompatibleProvider:
             and "reasoning_content" in raw
             and "tool call message" in raw
         )
+
+    def _apply_reasoning_controls(self, body: dict[str, Any], *, kwargs: dict[str, Any]) -> None:
+        """Apply optional reasoning/thinking controls in a best-effort compatible manner."""
+        effective_reasoning_effort = kwargs.get("reasoning_effort", self.reasoning_effort)
+        if effective_reasoning_effort is not None:
+            body["reasoning_effort"] = str(effective_reasoning_effort)
+
+        effective_thinking_enabled = kwargs.get("thinking_enabled", self.thinking_enabled)
+        if effective_thinking_enabled is None:
+            return
+
+        # Moonshot/Kimi expects thinking control semantics; OpenAI-compatible endpoints
+        # that do not support this key may reject it, but our caller can still run with
+        # thinking_enabled unset (None) to avoid forcing the flag.
+        if self._is_moonshot_like():
+            body["thinking"] = {"type": "enabled" if bool(effective_thinking_enabled) else "disabled"}
 
     def _parse_response(self, data: dict[str, Any]) -> tuple[str, Optional[list[ToolCall]]]:
         choices = data.get("choices", [])

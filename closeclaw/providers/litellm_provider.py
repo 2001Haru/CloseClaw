@@ -31,6 +31,8 @@ class LiteLLMProvider:
         temperature: float = 0.0,
         max_tokens: int = 2000,
         timeout_seconds: int = 60,
+        thinking_enabled: Optional[bool] = None,
+        reasoning_effort: Optional[str] = None,
     ) -> None:
         self.api_key = api_key
         self.model = model
@@ -39,6 +41,8 @@ class LiteLLMProvider:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.timeout_seconds = timeout_seconds
+        self.thinking_enabled = thinking_enabled
+        self.reasoning_effort = reasoning_effort
 
         try:
             litellm_module = importlib.import_module("litellm")
@@ -69,6 +73,13 @@ class LiteLLMProvider:
             "temperature": kwargs.get("temperature", self.temperature),
             "max_tokens": max(1, int(kwargs.get("max_tokens", self.max_tokens))),
         }
+        effective_reasoning_effort = kwargs.get("reasoning_effort", self.reasoning_effort)
+        if effective_reasoning_effort is not None:
+            payload["reasoning_effort"] = str(effective_reasoning_effort)
+
+        effective_thinking_enabled = kwargs.get("thinking_enabled", self.thinking_enabled)
+        if effective_thinking_enabled is not None:
+            payload["thinking"] = {"type": "enabled" if bool(effective_thinking_enabled) else "disabled"}
 
         if self.api_key:
             payload["api_key"] = self.api_key
