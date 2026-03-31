@@ -17,6 +17,7 @@ import re
 from typing import Any, Optional
 
 from .base import BaseChannel
+from .audio_transcription import AudioTranscriptionError, AudioTranscriptionService
 from ..types import Message, ChannelType, AuthorizationResponse
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,12 @@ class TelegramChannel(BaseChannel):
         
         # Telegram application
         self._app: Optional[Application] = None
+
+        # Optional shared audio transcription support (configured via metadata.voice_transcription).
+        self._audio_transcriber = AudioTranscriptionService.from_channel_config(
+            channel_config=self.config if isinstance(self.config, dict) else {},
+            channel_name="telegram",
+        )
     
     async def start(self) -> None:
         """Start Telegram bot with long polling."""
@@ -96,6 +103,9 @@ class TelegramChannel(BaseChannel):
         # Register handlers
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
+        )
+        self._app.add_handler(
+            MessageHandler(filters.VOICE, self._on_voice_message)
         )
         self._app.add_handler(
             CallbackQueryHandler(self._on_callback_query)
@@ -476,6 +486,92 @@ class TelegramChannel(BaseChannel):
         
         await self._message_queue.put(message)
         logger.info(f"Telegram message received from {message.sender_name}: {message.content[:50]}")
+
+    async def _on_voice_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle incoming Telegram voice messages with optional STT."""
+        if not update.message or not update.message.voice:
+            return
+
+        tg_msg = update.message
+        voice = tg_msg.voice
+        duration = getattr(voice, "duration", None)
+        file_id = getattr(voice, "file_id", "")
+        file_unique_id = getattr(voice, "file_unique_id", "")
+        mime_type = getattr(voice, "mime_type", "")
+        caption = getattr(tg_msg, "caption", "") or ""
+
+        transcript: Optional[str] = None
+        stt_error: Optional[str] = None
+        if self._audio_transcriber and self._app:
+            try:
+                async def _download(target_path):
+                    telegram_file = await self._app.bot.get_file(file_id)
+                    await telegram_file.download_to_drive(custom_path=str(target_path))
+
+                transcript = await self._audio_transcriber.transcribe_via_downloader(
+                    source_id=file_unique_id or file_id or str(tg_msg.message_id),
+                    downloader=_download,
+                    mime_type=mime_type,
+                    filename=f"{file_unique_id or file_id}.ogg",
+                )
+            except AudioTranscriptionError as exc:
+                stt_error = str(exc)
+                logger.warning("Telegram voice transcription unavailable: %s", exc)
+            except Exception as exc:
+                stt_error = f"Unexpected Telegram STT error: {exc}"
+                logger.exception("Unexpected Telegram voice transcription failure")
+
+        if transcript:
+            content_lines = [
+                "[Telegram voice message transcribed]",
+                transcript,
+            ]
+            if caption:
+                content_lines.append(f"caption={caption}")
+        else:
+            content_lines = [
+                "[Telegram voice message received]",
+                "Built-in speech-to-text could not transcribe this message.",
+                "Voice metadata is included below for debugging/fallback workflows.",
+            ]
+            if stt_error:
+                content_lines.append(f"stt_error={stt_error}")
+            if duration is not None:
+                content_lines.append(f"duration_seconds={duration}")
+            if mime_type:
+                content_lines.append(f"mime_type={mime_type}")
+            if file_id:
+                content_lines.append(f"telegram_file_id={file_id}")
+            if file_unique_id:
+                content_lines.append(f"telegram_file_unique_id={file_unique_id}")
+            if caption:
+                content_lines.append(f"caption={caption}")
+
+        message = self._create_message(
+            message_id=str(tg_msg.message_id),
+            sender_id=str(tg_msg.from_user.id),
+            sender_name=tg_msg.from_user.full_name or tg_msg.from_user.username or "Unknown",
+            content="\n".join(content_lines),
+            chat_id=tg_msg.chat_id,
+            telegram_update_id=update.update_id,
+            telegram_message_type="voice",
+            telegram_voice_duration=duration,
+            telegram_voice_file_id=file_id,
+            telegram_voice_file_unique_id=file_unique_id,
+            telegram_voice_mime_type=mime_type,
+            telegram_voice_caption=caption,
+            telegram_voice_transcript=transcript,
+            telegram_voice_stt_error=stt_error,
+        )
+
+        message.metadata["_chat_id"] = tg_msg.chat_id
+        await self._message_queue.put(message)
+        logger.info(
+            "Telegram voice message received from %s (duration=%s, transcribed=%s)",
+            message.sender_name,
+            duration,
+            bool(transcript),
+        )
     
     async def _on_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle Inline Keyboard button clicks (auth responses).

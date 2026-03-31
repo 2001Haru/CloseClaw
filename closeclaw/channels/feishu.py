@@ -13,10 +13,12 @@ import hashlib
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
 
+from .audio_transcription import AudioTranscriptionError, AudioTranscriptionService
 from .base import BaseChannel
 from ..types import Message, ChannelType, AuthorizationResponse
 
@@ -98,6 +100,10 @@ class FeishuChannel(BaseChannel):
         
         # Track processed message IDs to avoid duplicates
         self._processed_message_ids: set[str] = set()
+        self._audio_transcriber = AudioTranscriptionService.from_channel_config(
+            channel_config=self.config if isinstance(self.config, dict) else {},
+            channel_name="feishu",
+        )
     
     async def start(self) -> None:
         """Start Feishu channel: refresh token + start webhook server."""
@@ -278,6 +284,31 @@ class FeishuChannel(BaseChannel):
             logger.debug(f"Feishu message sent to {chat_id}")
         except Exception as e:
             logger.error(f"Failed to send Feishu message: {e}")
+
+    async def _download_message_resource_to_path(
+        self,
+        message_id: str,
+        file_key: str,
+        target_path: Path,
+        msg_type: str,
+    ) -> None:
+        token = await self._ensure_token()
+        url = f"{FEISHU_BASE_URL}/im/v1/messages/{message_id}/resources/{file_key}"
+        resource_types = ["audio"] if msg_type == "audio" else ["file", "audio"]
+        last_exc: Optional[Exception] = None
+        for resource_type in resource_types:
+            try:
+                resp = await self._client.get(
+                    url,
+                    params={"type": resource_type},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                resp.raise_for_status()
+                target_path.write_bytes(resp.content)
+                return
+            except Exception as exc:
+                last_exc = exc
+        raise RuntimeError(f"Failed to download Feishu message resource: {last_exc}")
 
     async def _reply_text_message(self, message_id: str, text: str) -> bool:
         """Reply to an existing Feishu message by message_id."""
@@ -489,19 +520,57 @@ class FeishuChannel(BaseChannel):
         if len(self._processed_message_ids) > 10000:
             self._processed_message_ids = set(list(self._processed_message_ids)[-5000:])
         
-        # Parse content
         msg_type = message_data.get("message_type", "")
-        if msg_type != "text":
-            return  # Only handle text messages for now
-        
         content_str = message_data.get("content", "{}")
         try:
             content = json.loads(content_str)
-            text = content.get("text", "")
         except json.JSONDecodeError:
-            text = content_str
-        
-        if not text:
+            content = {}
+
+        text = str(content.get("text", "") or "").strip() if isinstance(content, dict) else ""
+        file_key = str(content.get("file_key", "") or content.get("audio_key", "") or "") if isinstance(content, dict) else ""
+        mime_type = str(content.get("mime_type", "") or "") if isinstance(content, dict) else ""
+        duration = content.get("duration") if isinstance(content, dict) else None
+
+        transcript: Optional[str] = None
+        stt_error: Optional[str] = None
+        if msg_type == "audio" and file_key and self._audio_transcriber is not None:
+            try:
+                async def _download(target_path: Path) -> None:
+                    await self._download_message_resource_to_path(
+                        message_id=message_id,
+                        file_key=file_key,
+                        target_path=target_path,
+                        msg_type=msg_type,
+                    )
+
+                transcript = await self._audio_transcriber.transcribe_via_downloader(
+                    source_id=f"feishu_{message_id}_{file_key}",
+                    downloader=_download,
+                    mime_type=mime_type,
+                    filename=f"{file_key}.ogg",
+                )
+            except AudioTranscriptionError as exc:
+                stt_error = str(exc)
+                logger.warning("Feishu voice transcription unavailable: %s", exc)
+            except Exception as exc:
+                stt_error = f"Unexpected Feishu STT error: {exc}"
+                logger.exception("Unexpected Feishu voice transcription failure")
+
+        final_content = text
+        if transcript:
+            if final_content:
+                final_content = f"{final_content}\n\n[Feishu voice transcript]\n{transcript}"
+            else:
+                final_content = f"[Feishu voice message transcribed]\n{transcript}"
+        elif not final_content and msg_type == "audio":
+            final_content = (
+                "[Feishu voice message received]\n"
+                "Built-in speech-to-text could not transcribe this message."
+            )
+            if stt_error:
+                final_content += f"\nstt_error={stt_error}"
+        elif not final_content:
             return
         
         chat_id = message_data.get("chat_id", "")
@@ -511,13 +580,19 @@ class FeishuChannel(BaseChannel):
             message_id=message_id,
             sender_id=user_id,
             sender_name=user_id,  # Feishu doesn't always return name in events
-            content=text,
+            content=final_content,
             chat_id=chat_id,
+            feishu_message_type=msg_type or "text",
+            feishu_voice_file_key=file_key,
+            feishu_voice_duration=duration,
+            feishu_voice_mime_type=mime_type,
+            feishu_voice_transcript=transcript,
+            feishu_voice_stt_error=stt_error,
         )
         message.metadata["_chat_id"] = chat_id
         
         await self._message_queue.put(message)
-        logger.info(f"Feishu message received: {text[:50]}")
+        logger.info("Feishu message received: %s", final_content[:50])
     
     async def _handle_card_action(self, event: dict[str, Any]) -> None:
         """Handle Interactive Card button click (auth response)."""

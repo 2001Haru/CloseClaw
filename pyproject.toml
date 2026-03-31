@@ -62,6 +62,9 @@ whatsapp = [
 qq = [
     "qq-botpy>=1.2.1",
 ]
+voice = [
+    "faster-whisper>=1.0.3",
+]
 fastapi = [
     "fastapi>=0.104.0",
     "uvicorn>=0.24.0",

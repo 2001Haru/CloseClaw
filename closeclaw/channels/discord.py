@@ -7,6 +7,7 @@ import logging
 import re
 from typing import Any, Optional
 
+from .audio_transcription import AudioTranscriptionError, AudioTranscriptionService, looks_like_audio
 from .base import BaseChannel
 from ..types import Message, ChannelType, AuthorizationResponse
 
@@ -41,6 +42,10 @@ class DiscordChannel(BaseChannel):
         self._auth_futures: dict[str, asyncio.Future] = {}
         self._client: Optional[discord.Client] = None
         self._client_task: Optional[asyncio.Task] = None
+        self._audio_transcriber = AudioTranscriptionService.from_channel_config(
+            channel_config=self.config if isinstance(self.config, dict) else {},
+            channel_name="discord",
+        )
 
     async def start(self) -> None:
         self._running = True
@@ -63,20 +68,67 @@ class DiscordChannel(BaseChannel):
 
             sender_id = str(raw_message.author.id)
             content = (raw_message.content or "").strip()
-            if not content:
+            attachments = list(getattr(raw_message, "attachments", []) or [])
+            audio_attachment = None
+            for attachment in attachments:
+                content_type = str(getattr(attachment, "content_type", "") or "")
+                filename = str(getattr(attachment, "filename", "") or "")
+                if looks_like_audio(content_type=content_type, filename=filename):
+                    audio_attachment = attachment
+                    break
+
+            if not content and audio_attachment is None:
                 return
 
-            if self._try_resolve_auth_from_message(sender_id=sender_id, content=content):
+            if content and self._try_resolve_auth_from_message(sender_id=sender_id, content=content):
                 return
+
+            transcript: Optional[str] = None
+            stt_error: Optional[str] = None
+            if audio_attachment is not None and self._audio_transcriber is not None:
+                audio_url = str(getattr(audio_attachment, "url", "") or "")
+                audio_name = str(getattr(audio_attachment, "filename", "") or "")
+                audio_type = str(getattr(audio_attachment, "content_type", "") or "")
+                try:
+                    transcript = await self._audio_transcriber.transcribe_from_url(
+                        url=audio_url,
+                        source_id=f"discord_{raw_message.id}_{getattr(audio_attachment, 'id', 'audio')}",
+                        mime_type=audio_type,
+                        filename=audio_name,
+                    )
+                except AudioTranscriptionError as exc:
+                    stt_error = str(exc)
+                    logger.warning("Discord voice transcription unavailable: %s", exc)
+                except Exception as exc:
+                    stt_error = f"Unexpected Discord STT error: {exc}"
+                    logger.exception("Unexpected Discord voice transcription failure")
+
+            final_content = content
+            if transcript:
+                if final_content:
+                    final_content = f"{final_content}\n\n[Discord voice transcript]\n{transcript}"
+                else:
+                    final_content = f"[Discord voice message transcribed]\n{transcript}"
+            elif not final_content and audio_attachment is not None:
+                final_content = (
+                    "[Discord voice message received]\n"
+                    "Built-in speech-to-text could not transcribe this message."
+                )
+                if stt_error:
+                    final_content += f"\nstt_error={stt_error}"
+                final_content += f"\naudio_filename={getattr(audio_attachment, 'filename', '')}"
 
             msg = self._create_message(
                 message_id=str(raw_message.id),
                 sender_id=sender_id,
                 sender_name=getattr(raw_message.author, "display_name", None)
                 or getattr(raw_message.author, "name", "Unknown"),
-                content=content,
+                content=final_content,
                 _chat_id=str(raw_message.channel.id),
                 guild_id=str(raw_message.guild.id) if raw_message.guild else None,
+                discord_message_type="voice_or_text" if audio_attachment is not None else "text",
+                discord_voice_transcript=transcript,
+                discord_voice_stt_error=stt_error,
             )
             await self._message_queue.put(msg)
 

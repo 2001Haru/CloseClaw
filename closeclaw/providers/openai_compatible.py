@@ -106,6 +106,28 @@ class OpenAICompatibleProvider:
         except httpx.TimeoutException:
             raise TimeoutError(f"LLM request timed out after {self.timeout_seconds}s")
         except httpx.HTTPStatusError as e:
+            # Compatibility fallback: some models (e.g. GPT-5.x endpoints) require
+            # max_completion_tokens instead of max_tokens.
+            if self._should_retry_with_max_completion_tokens(e, body):
+                retry_body = dict(body)
+                max_tokens_value = retry_body.pop("max_tokens", None)
+                if max_tokens_value is not None:
+                    retry_body["max_completion_tokens"] = max_tokens_value
+                try:
+                    data = await run_with_transient_retry(lambda: _request(retry_body))
+                    text, tool_calls = self._parse_response(data)
+                    latency_ms = (time.perf_counter() - started) * 1000.0
+                    logger.info(
+                        "provider=openai-compatible model=%s fallback=max_completion_tokens latency_ms=%.2f tool_calls=%s",
+                        self.model,
+                        latency_ms,
+                        len(tool_calls or []),
+                    )
+                    return text, tool_calls
+                except httpx.HTTPStatusError as retry_exc:
+                    error_body = retry_exc.response.text[:500] if retry_exc.response else "No response"
+                    raise RuntimeError(f"LLM API error {retry_exc.response.status_code}: {error_body}")
+
             # Compatibility fallback: some models only accept one fixed temperature.
             # Example: "invalid temperature: only 0.6 is allowed for this model"
             required_temperature = self._extract_only_allowed_temperature(e)
@@ -170,6 +192,22 @@ class OpenAICompatibleProvider:
             return float(match.group(1))
         except Exception:
             return None
+
+    @staticmethod
+    def _should_retry_with_max_completion_tokens(
+        exc: httpx.HTTPStatusError,
+        request_body: dict[str, Any],
+    ) -> bool:
+        if not exc.response or exc.response.status_code != 400:
+            return False
+        if "max_tokens" not in request_body:
+            return False
+        raw = (exc.response.text or "").lower()
+        return (
+            "unsupported parameter" in raw
+            and "max_tokens" in raw
+            and "max_completion_tokens" in raw
+        )
 
     def _is_moonshot_like(self) -> bool:
         base = (self.base_url or "").lower()

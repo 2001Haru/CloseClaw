@@ -138,11 +138,13 @@ pip install -e ".[telegram]"
 pip install -e ".[discord]"
 pip install -e ".[whatsapp]"
 pip install -e ".[qq]"
+pip install -e ".[voice]"
 pip install -e ".[fastapi]"
 pip install -e ".[providers]"
 ```
 
 > 📝 `.[providers]` 会安装 `litellm`，是 `gemini` 和 `anthropic` provider 所需依赖。
+> 📝 `.[voice]` 会安装 `faster-whisper`，用于各通道语音转文字；同时需要系统 `PATH` 可找到 `ffmpeg`。
 
 ### 2) 生成配置
 

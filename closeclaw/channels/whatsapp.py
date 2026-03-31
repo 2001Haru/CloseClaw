@@ -3,11 +3,13 @@ from __future__ import annotations
 """WhatsApp channel integration via WebSocket bridge."""
 
 import asyncio
+import base64
 import json
 import logging
 import re
 from typing import Any, Optional
 
+from .audio_transcription import AudioTranscriptionError, AudioTranscriptionService, looks_like_audio
 from .base import BaseChannel
 from ..types import Message, ChannelType, AuthorizationResponse
 
@@ -46,6 +48,10 @@ class WhatsAppChannel(BaseChannel):
         self._bridge_task: Optional[asyncio.Task] = None
         self._ws = None
         self._connected = False
+        self._audio_transcriber = AudioTranscriptionService.from_channel_config(
+            channel_config=self.config if isinstance(self.config, dict) else {},
+            channel_name="whatsapp",
+        )
 
     async def start(self) -> None:
         self._running = True
@@ -223,20 +229,91 @@ class WhatsAppChannel(BaseChannel):
         content = str(data.get("content", "")).strip()
         chat_id = str(data.get("chat_id") or data.get("sender") or "")
         msg_id = str(data.get("id") or "")
+        media = data.get("media") if isinstance(data.get("media"), dict) else {}
+        mime_type = str(
+            data.get("audio_mime_type")
+            or data.get("mime_type")
+            or media.get("mime_type")
+            or media.get("mimetype")
+            or ""
+        )
+        filename = str(data.get("audio_filename") or media.get("filename") or "voice.ogg")
+        audio_url = str(
+            data.get("audio_url")
+            or data.get("audioUrl")
+            or media.get("audio_url")
+            or media.get("url")
+            or ""
+        )
+        audio_base64 = str(
+            data.get("audio_base64")
+            or data.get("audioBase64")
+            or media.get("audio_base64")
+            or media.get("base64")
+            or ""
+        ).strip()
 
-        if not sender_id or not content:
+        has_audio = bool(audio_url or audio_base64 or looks_like_audio(mime_type, filename))
+
+        if not sender_id or (not content and not has_audio):
             return
 
         if self._try_resolve_auth_from_message(sender_id=sender_id, content=content):
             return
 
+        transcript: Optional[str] = None
+        stt_error: Optional[str] = None
+        if self._audio_transcriber is not None and has_audio:
+            try:
+                if audio_base64:
+                    payload = base64.b64decode(audio_base64)
+                    transcript = await self._audio_transcriber.transcribe_from_bytes(
+                        payload=payload,
+                        source_id=f"wa_{msg_id or sender_id}_b64",
+                        mime_type=mime_type,
+                        filename=filename,
+                    )
+                elif audio_url:
+                    transcript = await self._audio_transcriber.transcribe_from_url(
+                        url=audio_url,
+                        source_id=f"wa_{msg_id or sender_id}_url",
+                        mime_type=mime_type,
+                        filename=filename,
+                    )
+            except AudioTranscriptionError as exc:
+                stt_error = str(exc)
+                logger.warning("WhatsApp voice transcription unavailable: %s", exc)
+            except Exception as exc:
+                stt_error = f"Unexpected WhatsApp STT error: {exc}"
+                logger.exception("Unexpected WhatsApp voice transcription failure")
+
+        final_content = content
+        if transcript:
+            if final_content:
+                final_content = f"{final_content}\n\n[WhatsApp voice transcript]\n{transcript}"
+            else:
+                final_content = f"[WhatsApp voice message transcribed]\n{transcript}"
+        elif not final_content and has_audio:
+            final_content = (
+                "[WhatsApp voice message received]\n"
+                "Built-in speech-to-text could not transcribe this message."
+            )
+            if stt_error:
+                final_content += f"\nstt_error={stt_error}"
+
         message = self._create_message(
             message_id=msg_id or f"wa_{asyncio.get_running_loop().time()}",
             sender_id=sender_id,
             sender_name=sender_id,
-            content=content,
+            content=final_content,
             _chat_id=chat_id,
             is_group=bool(data.get("isGroup", False)),
+            whatsapp_message_type="voice_or_text" if has_audio else "text",
+            whatsapp_voice_url=audio_url,
+            whatsapp_voice_mime_type=mime_type,
+            whatsapp_voice_filename=filename,
+            whatsapp_voice_transcript=transcript,
+            whatsapp_voice_stt_error=stt_error,
         )
         await self._message_queue.put(message)
 

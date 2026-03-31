@@ -8,6 +8,7 @@ import re
 from collections import deque
 from typing import Any, Optional
 
+from .audio_transcription import AudioTranscriptionError, AudioTranscriptionService, looks_like_audio
 from .base import BaseChannel
 from ..types import Message, ChannelType, AuthorizationResponse
 
@@ -54,6 +55,10 @@ class QQChannel(BaseChannel):
         self._last_message_id_by_chat: dict[str, str] = {}
         self._seq_anchor_by_chat: dict[str, str] = {}
         self._seq_counter_by_chat: dict[str, int] = {}
+        self._audio_transcriber = AudioTranscriptionService.from_channel_config(
+            channel_config=self.config if isinstance(self.config, dict) else {},
+            channel_name="qq",
+        )
 
     async def start(self) -> None:
         self._running = True
@@ -250,7 +255,35 @@ class QQChannel(BaseChannel):
                 self._processed_ids.append(msg_id)
 
             content = (getattr(data, "content", "") or "").strip()
-            if not content:
+            audio_url = ""
+            audio_name = ""
+            audio_type = ""
+            attachments = getattr(data, "attachments", None)
+            if attachments:
+                for item in attachments:
+                    if isinstance(item, dict):
+                        candidate_url = str(item.get("url") or item.get("file_url") or "")
+                        candidate_name = str(item.get("filename") or item.get("name") or "")
+                        candidate_type = str(item.get("content_type") or item.get("mime_type") or "")
+                    else:
+                        candidate_url = str(
+                            getattr(item, "url", "")
+                            or getattr(item, "file_url", "")
+                            or getattr(item, "download_url", "")
+                            or ""
+                        )
+                        candidate_name = str(getattr(item, "filename", "") or getattr(item, "name", "") or "")
+                        candidate_type = str(
+                            getattr(item, "content_type", "") or getattr(item, "mime_type", "") or ""
+                        )
+
+                    if candidate_url and looks_like_audio(content_type=candidate_type, filename=candidate_name):
+                        audio_url = candidate_url
+                        audio_name = candidate_name
+                        audio_type = candidate_type
+                        break
+
+            if not content and not audio_url:
                 return
 
             if is_group:
@@ -274,16 +307,51 @@ class QQChannel(BaseChannel):
                 self._seq_anchor_by_chat[chat_id] = msg_id
                 self._seq_counter_by_chat[chat_id] = 0
 
-            if self._try_resolve_auth_from_message(sender_id=sender_id, content=content):
+            if content and self._try_resolve_auth_from_message(sender_id=sender_id, content=content):
                 return
+
+            transcript: Optional[str] = None
+            stt_error: Optional[str] = None
+            if audio_url and self._audio_transcriber is not None:
+                try:
+                    transcript = await self._audio_transcriber.transcribe_from_url(
+                        url=audio_url,
+                        source_id=f"qq_{msg_id or sender_id}",
+                        mime_type=audio_type,
+                        filename=audio_name,
+                    )
+                except AudioTranscriptionError as exc:
+                    stt_error = str(exc)
+                    logger.warning("QQ voice transcription unavailable: %s", exc)
+                except Exception as exc:
+                    stt_error = f"Unexpected QQ STT error: {exc}"
+                    logger.exception("Unexpected QQ voice transcription failure")
+
+            final_content = content
+            if transcript:
+                if final_content:
+                    final_content = f"{final_content}\n\n[QQ voice transcript]\n{transcript}"
+                else:
+                    final_content = f"[QQ voice message transcribed]\n{transcript}"
+            elif not final_content and audio_url:
+                final_content = (
+                    "[QQ voice message received]\n"
+                    "Built-in speech-to-text could not transcribe this message."
+                )
+                if stt_error:
+                    final_content += f"\nstt_error={stt_error}"
 
             message = self._create_message(
                 message_id=msg_id or f"qq_{asyncio.get_running_loop().time()}",
                 sender_id=sender_id,
                 sender_name=sender_id,
-                content=content,
+                content=final_content,
                 _chat_id=chat_id,
                 message_id_source=msg_id,
+                qq_message_type="voice_or_text" if audio_url else "text",
+                qq_voice_url=audio_url,
+                qq_voice_transcript=transcript,
+                qq_voice_stt_error=stt_error,
             )
             await self._message_queue.put(message)
         except Exception:

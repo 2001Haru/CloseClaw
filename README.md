@@ -135,11 +135,13 @@ pip install -e ".[telegram]"
 pip install -e ".[discord]"
 pip install -e ".[whatsapp]"
 pip install -e ".[qq]"
+pip install -e ".[voice]"
 pip install -e ".[fastapi]"
 pip install -e ".[providers]"
 ```
 
 > 📝 `.[providers]` installs `litellm`, required for `gemini` and `anthropic` provider modes.
+> 📝 `.[voice]` installs `faster-whisper` for channel voice transcription. You also need `ffmpeg` available in PATH.
 
 ### 2) Create config
 

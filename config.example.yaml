@@ -59,15 +59,35 @@ channels:  # Message channels; at least one channel should be enabled.
   - type: "telegram"  # Telegram bot channel.
     enabled: true  # Enable Telegram polling/webhook channel.
     token: "TELEGRAM_BOT_TOKEN"  # Bot token from @BotFather.
+    metadata:
+      # Optional shared voice transcription settings for this channel.
+      voice_transcription:
+        enabled: false  # Set true to enable audio->text for incoming voice messages.
+        model_size: "base"  # faster-whisper model size.
+        compute_type: "int8"  # int8 / float16 (depends on your runtime).
+        language: null  # null = auto detect.
+        timeout_seconds: 90
+        download_timeout_seconds: 30
+        max_audio_bytes: 26214400  # 25MB.
+        # work_dir: "CloseClaw Memory/tmp/audio"
+        keep_temp_files: false
 
   - type: "feishu"  # Feishu/Lark channel.
     enabled: false  # Enable Feishu channel.
     token: "FEISHU_TOKEN"  # Feishu app token/app id.
     webhook_url: "FEISHU_WEBHOOK"  # Feishu webhook or secret endpoint config.
+    metadata:
+      verification_token: ""
+      webhook_port: 9000
+      voice_transcription:
+        enabled: false
 
   - type: "discord"  # Discord bot channel.
     enabled: false
     token: "DISCORD_BOT_TOKEN"  # Bot token from Discord Developer Portal.
+    metadata:
+      voice_transcription:
+        enabled: false
 
   - type: "whatsapp"  # WhatsApp bridge channel (websocket bridge required).
     enabled: false
@@ -78,6 +98,8 @@ channels:  # Message channels; at least one channel should be enabled.
     metadata:
       bridge_url: "ws://127.0.0.1:8765"  # Preferred bridge URL.
       bridge_token: ""  # Optional auth token for bridge.
+      voice_transcription:
+        enabled: false
       # Bridge should support outbound reply hints:
       #   reply_to_message_id / quoted_message_id
       # See docs/WhatsApp_Bridge_Protocol.md
@@ -86,6 +108,9 @@ channels:  # Message channels; at least one channel should be enabled.
     enabled: false
     token: "QQ_APP_ID"  # QQ app id.
     webhook_url: "QQ_APP_SECRET"  # QQ app secret.
+    metadata:
+      voice_transcription:
+        enabled: false
 
   - type: "cli"  # Local terminal channel.
     enabled: true  # Keep true for local development/testing.
